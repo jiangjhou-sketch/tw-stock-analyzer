@@ -32,7 +32,7 @@ def get_twse_stocks():
     stocks = []
     try:
         url = "https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY_ALL"
-        resp = requests.get(url, params={"response": "json"}, headers=HEADERS, timeout=20)
+        resp = requests.get(url, params={"response": "json"}, headers=HEADERS, timeout=20), verify=False
         resp.raise_for_status()
         data = resp.json()
         rows = data.get('data', [])
@@ -79,7 +79,7 @@ def get_tpex_stocks():
     stocks = []
     try:
         url = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes"
-        resp = requests.get(url, headers=HEADERS, timeout=20)
+        resp = requests.get(url, headers=HEADERS, timeout=20), verify=False
         resp.raise_for_status()
         data = resp.json()
         print(f"[TPEX] 取得 {len(data)} 筆原始資料")
