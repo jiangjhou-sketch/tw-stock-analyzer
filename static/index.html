@@ -381,6 +381,17 @@ async function startScan() {
   try {
     // 1. 建立任務
     const resp = await fetch('/api/analyze/start', { method: 'POST' });
+
+    // 安全解析：先確認是 JSON，不是 HTML 錯誤頁
+    const ct = resp.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      const text = await resp.text();
+      throw new Error(`伺服器回傳非 JSON（HTTP ${resp.status}）：${text.slice(0, 120)}`);
+    }
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.error || `HTTP ${resp.status}`);
+    }
     const { task_id } = await resp.json();
 
     // 2. 開始輪詢狀態
@@ -392,13 +403,27 @@ async function startScan() {
   }
 }
 
+// 安全 fetch JSON 工具
+async function fetchJSON(url, opts) {
+  const resp = await fetch(url, opts);
+  const ct = resp.headers.get('content-type') || '';
+  if (!ct.includes('application/json')) {
+    const text = await resp.text();
+    throw new Error(`HTTP ${resp.status}，回傳非 JSON：${text.slice(0, 120)}`);
+  }
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+  return data;
+}
+
 function pollTask(task_id, btn, icon, text) {
   let foundCount = 0;
+  let failCount  = 0;   // 連續失敗計數，允許最多 3 次才放棄
 
   pollTimer = setInterval(async () => {
     try {
-      const resp = await fetch(`/api/analyze/status/${task_id}`);
-      const task = await resp.json();
+      const task = await fetchJSON(`/api/analyze/status/${task_id}`);
+      failCount = 0;  // 成功就重置
 
       if (task.error) {
         clearInterval(pollTimer);
@@ -425,7 +450,6 @@ function pollTask(task_id, btn, icon, text) {
 
       } else if (task.status === 'done') {
         clearInterval(pollTimer);
-
         document.getElementById('progressCard').style.display = 'none';
         allData = task.stocks;
         renderStats(task);
@@ -441,11 +465,16 @@ function pollTask(task_id, btn, icon, text) {
       }
 
     } catch (err) {
-      clearInterval(pollTimer);
-      showError('輪詢失敗：' + err.message);
-      resetBtn(btn, icon, text);
+      failCount++;
+      console.warn(`輪詢失敗 (${failCount}/3)：`, err.message);
+      if (failCount >= 3) {
+        clearInterval(pollTimer);
+        showError(`輪詢連續失敗：${err.message}`);
+        resetBtn(btn, icon, text);
+      }
+      // 失敗次數未達上限 → 下次繼續輪詢，不中斷
     }
-  }, 1500);
+  }, 2000);
 }
 
 function resetBtn(btn, icon, text) {
