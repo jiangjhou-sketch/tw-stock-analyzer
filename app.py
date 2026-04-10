@@ -18,6 +18,25 @@ import os
 
 app = Flask(__name__, static_folder='static')
 
+@app.after_request
+def add_json_header(response):
+    """確保 API 路由回傳正確的 Content-Type"""
+    if response.status_code == 404 and not response.content_type.startswith('application/json'):
+        import json as _json
+        response.data = _json.dumps({'error': f'找不到路由', 'status': 404})
+        response.content_type = 'application/json'
+    return response
+
+@app.errorhandler(404)
+def not_found(e):
+    from flask import jsonify as _jsonify
+    return _jsonify({'error': '找不到此路由', 'status': 404}), 404
+
+@app.errorhandler(500)
+def server_error(e):
+    from flask import jsonify as _jsonify
+    return _jsonify({'error': f'伺服器內部錯誤：{str(e)}', 'status': 500}), 500
+
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     'Accept': 'application/json, text/plain, */*',
@@ -211,10 +230,12 @@ def run_analysis_task(task_id):
 # ──────────────────────────────────────────────
 @app.route('/')
 def index():
-    return send_from_directory('static', 'index.html')
+    # 兼容本機和雲端路徑
+    static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
+    return send_from_directory(static_dir, 'index.html')
 
 
-@app.route('/api/analyze/start', methods=['POST'])
+@app.route('/api/analyze/start', methods=['POST', 'GET'])
 def analyze_start():
     """建立分析任務，回傳 task_id"""
     task_id = str(uuid.uuid4())[:8]
