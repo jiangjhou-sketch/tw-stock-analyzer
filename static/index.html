@@ -223,6 +223,40 @@
     td:nth-child(n+5) { display: none; }
     .detail-grid { grid-template-columns: repeat(2,1fr); }
   }
+
+  /* Export buttons */
+  .export-bar {
+    display: none;
+    gap: 10px;
+    margin-top: 16px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .export-label { font-size: 12px; color: var(--muted); margin-right: 4px; }
+  .export-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 9px 20px; border-radius: 9px; font-size: 13px; font-weight: 600;
+    font-family: 'Noto Sans TC', sans-serif; cursor: pointer; border: 1px solid;
+    transition: all 0.2s; text-decoration: none; white-space: nowrap;
+  }
+  .export-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .export-btn.pdf {
+    background: rgba(255,77,109,0.1); border-color: rgba(255,77,109,0.4);
+    color: #ff4d6d;
+  }
+  .export-btn.pdf:hover:not(:disabled) {
+    background: rgba(255,77,109,0.2); box-shadow: 0 4px 12px rgba(255,77,109,0.2);
+    transform: translateY(-1px);
+  }
+  .export-btn.docx {
+    background: rgba(0,132,255,0.1); border-color: rgba(0,132,255,0.4);
+    color: #0084ff;
+  }
+  .export-btn.docx:hover:not(:disabled) {
+    background: rgba(0,132,255,0.2); box-shadow: 0 4px 12px rgba(0,132,255,0.2);
+    transform: translateY(-1px);
+  }
+  .export-hint { font-size: 11px; color: var(--muted); margin-left: auto; }
 </style>
 </head>
 <body>
@@ -277,6 +311,19 @@
     <div class="stat-card blue"><div class="stat-label">已掃描</div><div class="stat-value" id="statScanned">0</div></div>
     <div class="stat-card warn"><div class="stat-label">耗時 (秒)</div><div class="stat-value" id="statTime">-</div></div>
     <div class="stat-card accent"><div class="stat-label">最高連續天</div><div class="stat-value" id="statMaxDays">-</div></div>
+  </div>
+
+
+  <!-- Export Bar -->
+  <div class="export-bar" id="exportBar">
+    <span class="export-label">📥 匯出報告：</span>
+    <button class="export-btn pdf" id="btnPdf" onclick="exportReport('pdf')">
+      📄 匯出 PDF
+    </button>
+    <button class="export-btn docx" id="btnDocx" onclick="exportReport('docx')">
+      📝 匯出 Word
+    </button>
+    <span class="export-hint" id="exportHint"></span>
   </div>
 
   <!-- Table -->
@@ -453,6 +500,7 @@ function pollTask(task_id, btn, icon, text) {
         document.getElementById('progressCard').style.display = 'none';
         allData = task.stocks;
         renderStats(task);
+        document.getElementById('exportBar').style.display = allData.length > 0 ? 'flex' : 'none';
         renderTable(allData);
         document.getElementById('scanTime').textContent = `掃描時間：${task.timestamp}`;
         resetBtn(btn, icon, text);
@@ -657,6 +705,60 @@ function drawChart(data) {
   [0,Math.floor(n/4),Math.floor(n/2),Math.floor(3*n/4),n-1].forEach(i=>{
     if(data.dates[i]) ctx.fillText(data.dates[i].slice(5), xScale(i), h-4);
   });
+}
+
+
+// ── 匯出 PDF / DOCX ──
+async function exportReport(type) {
+  const btnId = type === 'pdf' ? 'btnPdf' : 'btnDocx';
+  const btn = document.getElementById(btnId);
+  const hint = document.getElementById('exportHint');
+
+  const origText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = type === 'pdf' ? '⏳ 產生 PDF...' : '⏳ 產生 Word...';
+  hint.textContent = '正在伺服器端產生文件，請稍候...';
+
+  try {
+    const payload = {
+      stocks:    allData,
+      timestamp: document.getElementById('scanTime').textContent.replace('掃描時間：',''),
+      scanned:   parseInt(document.getElementById('statScanned').textContent) || 0,
+    };
+
+    const resp = await fetch(`/api/export/${type}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.text();
+      throw new Error(`HTTP ${resp.status}: ${err.slice(0,120)}`);
+    }
+
+    // 觸發下載
+    const blob = await resp.blob();
+    const ext  = type === 'pdf' ? 'pdf' : 'docx';
+    const now  = new Date().toISOString().slice(0,16).replace('T','_').replace(':','');
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url;
+    a.download = `stock_report_${now}.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    hint.textContent = `✅ ${type.toUpperCase()} 下載完成！`;
+    setTimeout(() => { hint.textContent = ''; }, 3000);
+
+  } catch (err) {
+    hint.textContent = `❌ 匯出失敗：${err.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = origText;
+  }
 }
 
 function closeModal() { document.getElementById('modal').classList.remove('open'); }
