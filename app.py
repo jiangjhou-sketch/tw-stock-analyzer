@@ -286,6 +286,320 @@ def stock_detail(code):
     })
 
 
+# ──────────────────────────────────────────────
+# 匯出 PDF
+# ──────────────────────────────────────────────
+@app.route('/api/export/pdf', methods=['POST'])
+def export_pdf():
+    from flask import send_file
+    from reportlab.platypus import (SimpleDocTemplate, Table, TableStyle,
+                                     Paragraph, Spacer, HRFlowable)
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    import io
+
+    body = request.get_json(force=True)
+    stocks  = body.get('stocks', [])
+    ts      = body.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    scanned = body.get('scanned', 0)
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=15*mm, rightMargin=15*mm,
+        topMargin=18*mm, bottomMargin=18*mm,
+    )
+
+    # ── 嘗試載入中文字體（系統有就用，沒有就退回英文）──
+    CN_FONT = 'Helvetica'
+    try:
+        import glob
+        candidates = (
+            glob.glob('/usr/share/fonts/truetype/noto/*CJK*Regular*.ttf') +
+            glob.glob('/usr/share/fonts/truetype/wqy/*.ttf') +
+            glob.glob('/usr/share/fonts/**/*TC*Regular*.ttf', recursive=True) +
+            glob.glob('/usr/share/fonts/**/*SC*Regular*.ttf', recursive=True)
+        )
+        if candidates:
+            pdfmetrics.registerFont(TTFont('CJK', candidates[0]))
+            CN_FONT = 'CJK'
+    except Exception:
+        pass
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('title', fontName=CN_FONT, fontSize=16,
+                                  textColor=colors.HexColor('#00d4aa'),
+                                  spaceAfter=4)
+    sub_style   = ParagraphStyle('sub', fontName=CN_FONT, fontSize=9,
+                                  textColor=colors.HexColor('#94a3b8'),
+                                  spaceAfter=10)
+    footer_style = ParagraphStyle('footer', fontName=CN_FONT, fontSize=8,
+                                   textColor=colors.HexColor('#64748b'))
+
+    story = []
+
+    # 標題
+    story.append(Paragraph('台股均量追蹤系統  掃描報告', title_style))
+    story.append(Paragraph(
+        f'掃描時間：{ts}　　已掃描個股：{scanned} 支　　符合條件：{len(stocks)} 支',
+        sub_style))
+    story.append(Paragraph('篩選條件：5日均量 > 20日均量，連續 2～5 個交易日', sub_style))
+    story.append(HRFlowable(width='100%', thickness=1,
+                             color=colors.HexColor('#1e2d47'), spaceAfter=10))
+
+    if not stocks:
+        story.append(Paragraph('本次掃描無符合條件的個股。', sub_style))
+    else:
+        # 表頭
+        headers = ['股票代碼', '名稱', '市場', '漲幅(%)', '連續(日)',
+                   '5日均量', '20日均量', '均量比率']
+        rows = [headers]
+        for s in stocks:
+            def fv(n):
+                if not n: return '-'
+                if n >= 1e8: return f"{n/1e8:.1f}億"
+                if n >= 1e4: return f"{n/1e3:.0f}K"
+                return str(n)
+            chg = f"+{s['change_pct']:.2f}" if s['change_pct'] >= 0 else f"{s['change_pct']:.2f}"
+            rows.append([
+                s.get('code',''),
+                s.get('name',''),
+                s.get('market',''),
+                chg,
+                str(s.get('consecutive_days','')),
+                fv(s.get('ma5_volume')),
+                fv(s.get('ma20_volume')),
+                f"{s.get('ratio',0):.3f}x",
+            ])
+
+        col_widths = [22*mm, 38*mm, 16*mm, 20*mm, 20*mm, 26*mm, 26*mm, 22*mm]
+
+        t = Table(rows, colWidths=col_widths, repeatRows=1)
+
+        # 連續天數顏色對應
+        day_colors = {2: '#334155', 3: '#422006', 4: '#172554', 5: '#022c22'}
+
+        cmd = [
+            # 全體
+            ('FONTNAME',  (0,0), (-1,-1), CN_FONT),
+            ('FONTSIZE',  (0,0), (-1,-1), 8),
+            ('ALIGN',     (0,0), (-1,-1), 'CENTER'),
+            ('VALIGN',    (0,0), (-1,-1), 'MIDDLE'),
+            ('ROWBACKGROUNDS', (0,1), (-1,-1),
+             [colors.HexColor('#111827'), colors.HexColor('#0f172a')]),
+            ('TEXTCOLOR',  (0,1), (-1,-1), colors.HexColor('#cbd5e1')),
+            # 表頭
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#0f3460')),
+            ('TEXTCOLOR',  (0,0), (-1,0), colors.HexColor('#00d4aa')),
+            ('FONTSIZE',   (0,0), (-1,0), 8.5),
+            ('BOTTOMPADDING', (0,0), (-1,0), 7),
+            ('TOPPADDING',    (0,0), (-1,0), 7),
+            # 格線
+            ('GRID',      (0,0), (-1,-1), 0.3, colors.HexColor('#1e2d47')),
+            ('BOTTOMPADDING', (0,1), (-1,-1), 5),
+            ('TOPPADDING',    (0,1), (-1,-1), 5),
+            # 漲幅欄位顏色
+            ('TEXTCOLOR', (3,1), (3,-1), colors.HexColor('#00d98b')),
+            # 均量比率顏色
+            ('TEXTCOLOR', (7,1), (7,-1), colors.HexColor('#0084ff')),
+        ]
+        # 按連續天數為整列上色
+        for row_i, s in enumerate(stocks, start=1):
+            d = s.get('consecutive_days', 3)
+            bg = day_colors.get(d, '#0f172a')
+            cmd.append(('BACKGROUND', (4, row_i), (4, row_i),
+                         colors.HexColor('#00d4aa' if d == 5 else
+                                         '#0084ff' if d == 4 else
+                                         '#ffb547' if d == 3 else '#334155')))
+            cmd.append(('TEXTCOLOR', (4, row_i), (4, row_i), colors.black))
+
+        t.setStyle(TableStyle(cmd))
+        story.append(t)
+
+    story.append(Spacer(1, 8*mm))
+    story.append(HRFlowable(width='100%', thickness=0.5,
+                             color=colors.HexColor('#1e2d47'), spaceAfter=4))
+    story.append(Paragraph(
+        '資料來源：台灣證券交易所 (TWSE) / 櫃買中心 (TPEX)　　本報告僅供參考，不構成投資建議',
+        footer_style))
+
+    doc.build(story)
+    buf.seek(0)
+
+    fname = f"stock_report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+    return send_file(buf, mimetype='application/pdf',
+                     as_attachment=True, download_name=fname)
+
+
+# ──────────────────────────────────────────────
+# 匯出 DOCX
+# ──────────────────────────────────────────────
+@app.route('/api/export/docx', methods=['POST'])
+def export_docx():
+    from flask import send_file
+    from docx import Document
+    from docx.shared import Pt, RGBColor, Cm, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    import io
+
+    body = request.get_json(force=True)
+    stocks  = body.get('stocks', [])
+    ts      = body.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    scanned = body.get('scanned', 0)
+
+    doc = Document()
+
+    # ── 頁面設定 ──
+    section = doc.sections[0]
+    section.page_width  = Cm(29.7)
+    section.page_height = Cm(21.0)
+    section.left_margin = section.right_margin = Cm(1.5)
+    section.top_margin  = section.bottom_margin = Cm(1.8)
+
+    def set_cell_bg(cell, hex_color):
+        tc   = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+        shd  = OxmlElement('w:shd')
+        shd.set(qn('w:fill'), hex_color)
+        shd.set(qn('w:val'), 'clear')
+        tcPr.append(shd)
+
+    def set_cell_border(cell, color='1E2D47'):
+        tc   = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+        tcBorders = OxmlElement('w:tcBorders')
+        for side in ['top','left','bottom','right']:
+            el = OxmlElement(f'w:{side}')
+            el.set(qn('w:val'), 'single')
+            el.set(qn('w:sz'), '4')
+            el.set(qn('w:color'), color)
+            tcBorders.append(el)
+        tcPr.append(tcBorders)
+
+    # ── 標題 ──
+    h = doc.add_heading('台股均量追蹤系統 — 掃描報告', 0)
+    h.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    run = h.runs[0]
+    run.font.color.rgb = RGBColor(0x00, 0xD4, 0xAA)
+    run.font.size = Pt(18)
+
+    # 副標題
+    p = doc.add_paragraph()
+    p.add_run(f'掃描時間：{ts}').font.size = Pt(9)
+    p.add_run(f'　　已掃描：{scanned} 支　　符合條件：{len(stocks)} 支').font.size = Pt(9)
+    p.add_run('\n篩選條件：5日均量 > 20日均量，連續 2～5 個交易日').font.size = Pt(9)
+    for run in p.runs:
+        run.font.color.rgb = RGBColor(0x94, 0xA3, 0xB8)
+
+    doc.add_paragraph()
+
+    if not stocks:
+        doc.add_paragraph('本次掃描無符合條件的個股。')
+    else:
+        # ── 表格 ──
+        headers = ['代碼', '名稱', '市場', '漲幅(%)', '連續(日)',
+                   '5日均量', '20日均量', '均量比率']
+        col_widths_cm = [2.0, 3.8, 1.6, 2.0, 2.0, 2.8, 2.8, 2.4]
+
+        table = doc.add_table(rows=1, cols=len(headers))
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        table.style = 'Table Grid'
+
+        # 設定欄寬
+        for i, w in enumerate(col_widths_cm):
+            for cell in table.columns[i].cells:
+                cell.width = Cm(w)
+
+        # 表頭
+        hdr_row = table.rows[0]
+        for i, (cell, txt) in enumerate(zip(hdr_row.cells, headers)):
+            set_cell_bg(cell, '0F3460')
+            set_cell_border(cell)
+            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+            p = cell.paragraphs[0]
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = p.add_run(txt)
+            run.bold = True
+            run.font.size = Pt(8.5)
+            run.font.color.rgb = RGBColor(0x00, 0xD4, 0xAA)
+
+        # 資料列
+        day_colors_hex = {5:'022C22', 4:'172554', 3:'422006', 2:'1E293B'}
+
+        def fv(n):
+            if not n: return '-'
+            if n >= 1e8: return f"{n/1e8:.1f}億"
+            if n >= 1e4: return f"{n/1e3:.0f}K"
+            return str(n)
+
+        for idx, s in enumerate(stocks):
+            row = table.add_row()
+            row.height = Cm(0.75)
+            d = s.get('consecutive_days', 2)
+            row_bg = day_colors_hex.get(d, '0F172A')
+            alt_bg = '111827' if idx % 2 == 0 else '0F172A'
+
+            chg = f"+{s['change_pct']:.2f}" if s['change_pct'] >= 0 else f"{s['change_pct']:.2f}"
+            values = [
+                s.get('code',''),
+                s.get('name',''),
+                s.get('market',''),
+                chg,
+                str(d),
+                fv(s.get('ma5_volume')),
+                fv(s.get('ma20_volume')),
+                f"{s.get('ratio',0):.3f}x",
+            ]
+            # 特殊顏色設定
+            val_colors = [
+                RGBColor(0xFF,0xFF,0xFF),   # 代碼 - 白
+                RGBColor(0xCB,0xD5,0xE1),   # 名稱 - 淡灰
+                RGBColor(0xFF,0xB5,0x47),   # 市場 - 橙
+                (RGBColor(0x00,0xD9,0x8B) if s['change_pct'] >= 0
+                 else RGBColor(0xFF,0x4D,0x6D)),  # 漲幅
+                RGBColor(0x00,0xD4,0xAA),   # 連續天數 - 綠
+                RGBColor(0x00,0xD4,0xAA),   # 5日均量 - 綠
+                RGBColor(0x94,0xA3,0xB8),   # 20日均量 - 灰
+                RGBColor(0x00,0x84,0xFF),   # 比率 - 藍
+            ]
+
+            for i, (cell, val, vc) in enumerate(zip(row.cells, values, val_colors)):
+                set_cell_bg(cell, alt_bg)
+                set_cell_border(cell)
+                cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+                p = cell.paragraphs[0]
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                run = p.add_run(val)
+                run.font.size = Pt(8)
+                run.font.color.rgb = vc
+                if i == 0:
+                    run.bold = True
+
+    # 頁尾
+    doc.add_paragraph()
+    footer_p = doc.add_paragraph(
+        '資料來源：台灣證券交易所 (TWSE) / 櫃買中心 (TPEX)　　本報告僅供參考，不構成投資建議')
+    for run in footer_p.runs:
+        run.font.size = Pt(8)
+        run.font.color.rgb = RGBColor(0x64, 0x74, 0x8B)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+
+    fname = f"stock_report_{datetime.now().strftime('%Y%m%d_%H%M')}.docx"
+    return send_file(buf,
+                     mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                     as_attachment=True, download_name=fname)
+
+
 if __name__ == '__main__':
     os.makedirs('static', exist_ok=True)
     print("=" * 50)
