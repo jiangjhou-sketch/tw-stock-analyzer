@@ -46,16 +46,57 @@ def server_error(e):
 # TWSE + TPEX 行情資料
 # ══════════════════════════════════════════════
 def get_twse_stocks():
+    """
+    取得上市股票當日行情，依序嘗試三個端點：
+    1. TWSE OpenAPI (openapi.twse.com.tw) — 公開無封鎖，首選
+    2. TWSE rwd API (www.twse.com.tw/rwd)  — 備援
+    3. TWSE exchangeReport open_data (CSV) — 最後備援
+    """
     stocks = []
+
+    # ── 端點 1：TWSE OpenAPI ─────────────────────────────
     try:
-        url = "https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY_ALL"
-        resp = requests.get(url, params={"response": "json"}, headers=HEADERS, timeout=20)
+        url  = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+        resp = requests.get(url, headers=HEADERS, timeout=25)
+        resp.raise_for_status()
+        data = resp.json()
+        if isinstance(data, list) and len(data) > 0:
+            for item in data:
+                try:
+                    code     = str(item.get('Code', '')).strip()
+                    if not re.match(r'^\d{4}$', code): continue
+                    name     = str(item.get('Name', '')).strip()
+                    close_s  = str(item.get('ClosingPrice', '0')).replace(',', '').strip()
+                    change_s = str(item.get('Change', '0')).replace(',', '').replace('+', '').strip()
+                    vol_s    = str(item.get('TradeVolume', '0')).replace(',', '').strip()
+                    close    = float(close_s)   if close_s   else 0.0
+                    change   = float(change_s)  if change_s  else 0.0
+                    volume   = int(float(vol_s)) if vol_s    else 0
+                    if close <= 0: continue
+                    prev = close - change
+                    if prev <= 0: continue
+                    chg_pct = round((change / prev) * 100, 2)
+                    if chg_pct <= 0: continue
+                    stocks.append({'code': code, 'symbol': f"{code}.TW", 'name': name,
+                                   'change_pct': chg_pct, 'price': close,
+                                   'volume': volume, 'market': '上市'})
+                except Exception:
+                    continue
+            if stocks:
+                print(f"[TWSE-OpenAPI] 上漲：{len(stocks)} 支")
+                return stocks
+    except Exception as e:
+        print(f"[TWSE-OpenAPI] 失敗：{e}")
+
+    # ── 端點 2：rwd API ──────────────────────────────────
+    try:
+        url  = "https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY_ALL"
+        resp = requests.get(url, params={"response": "json"}, headers=HEADERS, timeout=25)
         resp.raise_for_status()
         for row in resp.json().get('data', []):
             try:
                 code = row[0].strip()
-                if not re.match(r'^\d{4}$', code):
-                    continue
+                if not re.match(r'^\d{4}$', code): continue
                 name   = row[1].strip()
                 close  = float(row[7].replace(',', '').strip())
                 change = float(row[8].replace(',', '').strip())
@@ -63,14 +104,44 @@ def get_twse_stocks():
                 if prev <= 0: continue
                 chg_pct = round((change / prev) * 100, 2)
                 if chg_pct <= 0: continue
-                stocks.append({'code': code, 'symbol': f"{code}.TW",  'name': name,
-                                'change_pct': chg_pct, 'price': close,
-                                'volume': int(row[2].replace(',', '')), 'market': '上市'})
+                stocks.append({'code': code, 'symbol': f"{code}.TW", 'name': name,
+                               'change_pct': chg_pct, 'price': close,
+                               'volume': int(row[2].replace(',', '')), 'market': '上市'})
             except Exception:
                 continue
-        print(f"[TWSE] 上漲：{len(stocks)} 支")
+        if stocks:
+            print(f"[TWSE-rwd] 上漲：{len(stocks)} 支")
+            return stocks
     except Exception as e:
-        print(f"[TWSE] 失敗：{e}")
+        print(f"[TWSE-rwd] 失敗：{e}")
+
+    # ── 端點 3：open_data CSV ────────────────────────────
+    try:
+        import io as _io
+        url  = "https://www.twse.com.tw/exchangeReport/STOCK_DAY_ALL?response=open_data"
+        resp = requests.get(url, headers=HEADERS, timeout=25)
+        resp.raise_for_status()
+        df = pd.read_csv(_io.StringIO(resp.text))
+        for _, row in df.iterrows():
+            try:
+                code = str(row.iloc[0]).strip()
+                if not re.match(r'^\d{4}$', code): continue
+                name   = str(row.iloc[1]).strip()
+                close  = float(str(row.iloc[7]).replace(',', ''))
+                change = float(str(row.iloc[8]).replace(',', ''))
+                prev   = close - change
+                if prev <= 0: continue
+                chg_pct = round((change / prev) * 100, 2)
+                if chg_pct <= 0: continue
+                stocks.append({'code': code, 'symbol': f"{code}.TW", 'name': name,
+                               'change_pct': chg_pct, 'price': close,
+                               'volume': int(str(row.iloc[2]).replace(',', '')), 'market': '上市'})
+            except Exception:
+                continue
+        print(f"[TWSE-CSV] 上漲：{len(stocks)} 支")
+    except Exception as e:
+        print(f"[TWSE-CSV] 失敗：{e}")
+
     return stocks
 
 
