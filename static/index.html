@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>台股均量追蹤系統</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0e1a;
+    --surface: #111827;
+    --surface2: #1a2236;
+    --border: #1e2d47;
+    --accent: #00d4aa;
+    --accent2: #0084ff;
+    --bull: #00d98b;
+    --bear: #ff4d6d;
+    --warn: #ffb547;
+    --text: #e2e8f0;
+    --muted: #64748b;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Noto Sans TC', sans-serif;
+    min-height: 100vh;
+  }
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(0,212,170,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,212,170,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none; z-index: 0;
+  }
+  .container { max-width: 1200px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+
+  header { padding: 32px 0 20px; border-bottom: 1px solid var(--border); }
+  .header-inner { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .logo-icon {
+    width: 48px; height: 48px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border-radius: 12px; display: flex; align-items: center; justify-content: center;
+    font-size: 22px; box-shadow: 0 0 20px rgba(0,212,170,0.3); flex-shrink: 0;
+  }
+  .brand-text h1 {
+    font-size: 22px; font-weight: 700; letter-spacing: -0.5px;
+    background: linear-gradient(90deg, var(--accent), #7fffff);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  }
+  .brand-text p { font-size: 12px; color: var(--muted); font-family: 'JetBrains Mono', monospace; margin-top: 2px; }
+
+  .scan-btn {
+    display: flex; align-items: center; gap: 10px;
+    background: linear-gradient(135deg, var(--accent), #00a88a);
+    color: #001a14; border: none; padding: 12px 28px; border-radius: 10px;
+    font-size: 15px; font-weight: 700; font-family: 'Noto Sans TC', sans-serif;
+    cursor: pointer; transition: all 0.2s; box-shadow: 0 4px 16px rgba(0,212,170,0.3); white-space: nowrap;
+  }
+  .scan-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,212,170,0.4); }
+  .scan-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+  .spin { animation: spin 1s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .strategy-bar { display: flex; gap: 12px; padding: 16px 0 4px; flex-wrap: wrap; align-items: center; }
+  .strategy-tag {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 500;
+    font-family: 'JetBrains Mono', monospace; border: 1px solid;
+  }
+  .tag-green { background: rgba(0,217,139,0.1); border-color: rgba(0,217,139,0.3); color: var(--bull); }
+  .tag-blue  { background: rgba(0,132,255,0.1); border-color: rgba(0,132,255,0.3); color: var(--accent2); }
+  .tag-warn  { background: rgba(255,181,71,0.1); border-color: rgba(255,181,71,0.3); color: var(--warn); }
+
+  /* Progress Card */
+  #progressCard {
+    display: none;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 24px 28px; margin-top: 20px;
+  }
+  .prog-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .prog-dot {
+    width: 10px; height: 10px; border-radius: 50%; background: var(--accent);
+    animation: pulse 1.2s ease-in-out infinite; flex-shrink: 0;
+  }
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.4;transform:scale(0.7)} }
+  .prog-label { font-size: 14px; font-weight: 500; flex: 1; }
+  .prog-count { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--muted); }
+  .prog-track { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; margin-bottom: 10px; }
+  .prog-fill { height: 100%; background: linear-gradient(90deg, var(--accent2), var(--accent)); border-radius: 4px; transition: width 0.5s ease; width: 0%; }
+  .prog-detail { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; }
+  .prog-found { color: var(--bull); font-family: 'JetBrains Mono', monospace; }
+
+  /* Stats */
+  #statsRow { display: none; gap: 16px; margin-top: 20px; flex-wrap: wrap; }
+  .stat-card {
+    flex: 1; min-width: 150px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px 20px; position: relative; overflow: hidden;
+  }
+  .stat-card::before { content: ''; position: absolute; top:0;left:0;right:0;height:2px; }
+  .stat-card.green::before { background: var(--bull); }
+  .stat-card.blue::before  { background: var(--accent2); }
+  .stat-card.warn::before  { background: var(--warn); }
+  .stat-card.accent::before { background: var(--accent); }
+  .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+  .stat-value { font-size: 28px; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+  .stat-card.green .stat-value  { color: var(--bull); }
+  .stat-card.blue .stat-value   { color: var(--accent2); }
+  .stat-card.warn .stat-value   { color: var(--warn); }
+  .stat-card.accent .stat-value { color: var(--accent); }
+
+  /* Table */
+  #tableWrap {
+    display: none; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 14px; overflow: hidden; margin-top: 20px; margin-bottom: 40px;
+  }
+  .table-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 24px; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px;
+  }
+  .table-title { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .badge { display:inline-block; padding:3px 10px; border-radius:12px; font-size:11px; font-weight:600; background:rgba(0,212,170,0.15); color:var(--accent); }
+  .filter-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tab {
+    padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 500;
+    cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--muted);
+    font-family: 'Noto Sans TC', sans-serif; transition: all 0.15s;
+  }
+  .tab.active, .tab:hover { background: rgba(0,212,170,0.1); border-color: var(--accent); color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    padding: 12px 16px; text-align: left; font-size: 11px; font-weight: 600;
+    color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px;
+    background: var(--surface2); border-bottom: 1px solid var(--border);
+    cursor: pointer; user-select: none; white-space: nowrap;
+  }
+  thead th:hover { color: var(--accent); }
+  tbody tr { border-bottom: 1px solid rgba(30,45,71,0.6); transition: background 0.15s; cursor: pointer; }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: var(--surface2); }
+  td { padding: 14px 16px; font-size: 13px; }
+  .stock-code { font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 15px; color: #fff; }
+  .stock-name { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .num { font-family: 'JetBrains Mono', monospace; text-align: right; }
+  .change-pos { color: var(--bull); }
+  .change-neg { color: var(--bear); }
+  .mkt-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 10px;
+    font-weight: 600; margin-top: 3px;
+  }
+  .mkt-tw  { background: rgba(0,132,255,0.15); color: var(--accent2); }
+  .mkt-two { background: rgba(255,181,71,0.15); color: var(--warn); }
+  .days-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; border-radius: 8px;
+    font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 15px;
+  }
+  .days-2 { background: rgba(100,116,139,0.15); color: var(--muted); }
+  .days-3 { background: rgba(255,181,71,0.15); color: var(--warn); }
+  .days-4 { background: rgba(0,132,255,0.15); color: var(--accent2); }
+  .days-5 { background: rgba(0,212,170,0.15); color: var(--accent); box-shadow: 0 0 12px rgba(0,212,170,0.2); }
+  .ratio-bar { display: flex; align-items: center; gap: 8px; }
+  .ratio-track { width: 80px; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .ratio-fill { height: 100%; background: linear-gradient(90deg, var(--accent2), var(--accent)); border-radius: 2px; }
+  .vol-num { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--muted); }
+  .timestamp { font-size: 12px; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+
+  /* Intro */
+  #intro {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 80px 40px; text-align: center; gap: 20px;
+  }
+  .intro-icon { font-size: 56px; }
+  .intro-title { font-size: 26px; font-weight: 700; }
+  .intro-desc { color: var(--muted); font-size: 15px; max-width: 520px; line-height: 1.8; }
+  .how-it-works { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; margin-top: 10px; }
+  .how-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px; max-width: 200px; text-align: center;
+  }
+  .how-card .step { font-size: 28px; margin-bottom: 10px; }
+  .how-card h3 { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+  .how-card p { font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+  /* Modal */
+  #modal {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100;
+    align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(4px);
+  }
+  #modal.open { display: flex; }
+  .modal-box {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+    padding: 28px; width: 100%; max-width: 700px; max-height: 80vh; overflow-y: auto;
+  }
+  .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+  .modal-close {
+    background: var(--surface2); border: 1px solid var(--border); color: var(--muted);
+    width: 32px; height: 32px; border-radius: 8px; cursor: pointer; font-size: 16px;
+    display: flex; align-items: center; justify-content: center; transition: all 0.15s;
+  }
+  .modal-close:hover { color: var(--text); }
+  #chartCanvas { width: 100%; height: 220px; background: var(--surface2); border-radius: 10px; border: 1px solid var(--border); margin-bottom: 16px; }
+  .detail-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
+  .detail-item { background: var(--surface2); border-radius: 10px; padding: 14px; text-align: center; }
+  .detail-item .label { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+  .detail-item .value { font-size: 18px; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+
+  /* Error banner */
+  .err-banner {
+    background: rgba(255,77,109,0.1); border: 1px solid rgba(255,77,109,0.3);
+    border-radius: 10px; padding: 16px 20px; color: var(--bear);
+    display: flex; align-items: center; gap: 10px; margin-top: 20px;
+  }
+
+  @media (max-width: 600px) {
+    .header-inner { flex-direction: column; align-items: flex-start; }
+    .scan-btn { width: 100%; justify-content: center; }
+    thead th:nth-child(n+5) { display: none; }
+    td:nth-child(n+5) { display: none; }
+    .detail-grid { grid-template-columns: repeat(2,1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="header-inner">
+      <div class="brand">
+        <div class="logo-icon">📊</div>
+        <div class="brand-text">
+          <h1>台股均量追蹤系統</h1>
+          <p>TWSE · TPEX · 量能趨勢篩選器</p>
+        </div>
+      </div>
+      <button class="scan-btn" id="scanBtn" onclick="startScan()">
+        <span id="scanIcon">🔍</span>
+        <span id="scanText">開始掃描</span>
+      </button>
+    </div>
+    <div class="strategy-bar">
+      <span class="strategy-tag tag-green">📈 來源：TWSE 上市前100 + TPEX 上櫃前100</span>
+      <span class="strategy-tag tag-blue">📊 條件：5日均量 &gt; 20日均量</span>
+      <span class="strategy-tag tag-warn">⏱ 連續：2 ～ 5 個交易日</span>
+    </div>
+  </header>
+
+  <!-- Error Banner -->
+  <div id="errBanner" class="err-banner" style="display:none;">
+    <span>⚠</span>
+    <span id="errMsg"></span>
+  </div>
+
+  <!-- Progress Card -->
+  <div id="progressCard">
+    <div class="prog-header">
+      <div class="prog-dot"></div>
+      <div class="prog-label" id="progLabel">準備開始...</div>
+      <div class="prog-count" id="progCount"></div>
+    </div>
+    <div class="prog-track">
+      <div class="prog-fill" id="progFill"></div>
+    </div>
+    <div class="prog-detail">
+      <span id="progStock" style="color:var(--muted)"></span>
+      <span class="prog-found" id="progFound"></span>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div id="statsRow">
+    <div class="stat-card green"><div class="stat-label">符合條件</div><div class="stat-value" id="statMatched">0</div></div>
+    <div class="stat-card blue"><div class="stat-label">已掃描</div><div class="stat-value" id="statScanned">0</div></div>
+    <div class="stat-card warn"><div class="stat-label">耗時 (秒)</div><div class="stat-value" id="statTime">-</div></div>
+    <div class="stat-card accent"><div class="stat-label">最高連續天</div><div class="stat-value" id="statMaxDays">-</div></div>
+  </div>
+
+  <!-- Table -->
+  <div id="tableWrap">
+    <div class="table-header">
+      <div class="table-title">
+        篩選結果 <span class="badge" id="resultCount">0 支</span>
+      </div>
+      <div>
+        <div class="timestamp" id="scanTime"></div>
+        <div class="filter-tabs" style="margin-top:8px;">
+          <button class="tab active" onclick="filterDays(0,this)">全部</button>
+          <button class="tab" onclick="filterDays(5,this)">5 日</button>
+          <button class="tab" onclick="filterDays(4,this)">4 日</button>
+          <button class="tab" onclick="filterDays(3,this)">3 日</button>
+          <button class="tab" onclick="filterDays(2,this)">2 日</button>
+        </div>
+      </div>
+    </div>
+    <div id="emptyState" style="display:none; padding:60px; text-align:center;">
+      <div style="font-size:40px;margin-bottom:12px;">🔍</div>
+      <div style="font-size:18px;font-weight:600;margin-bottom:8px;">目前無符合條件的個股</div>
+      <div style="color:var(--muted);font-size:13px;">在當前排行中，沒有找到連續 2～5 日 5日均量 > 20日均量的個股</div>
+    </div>
+    <div style="overflow-x:auto;">
+      <table id="resultTable">
+        <thead>
+          <tr>
+            <th onclick="sortTable('code')">股票 ↕</th>
+            <th onclick="sortTable('change_pct')">漲幅 ↕</th>
+            <th onclick="sortTable('consecutive_days')">連續天 ↕</th>
+            <th onclick="sortTable('ma5_volume')">5日均量 ↕</th>
+            <th onclick="sortTable('ma20_volume')">20日均量 ↕</th>
+            <th onclick="sortTable('ratio')">均量比率 ↕</th>
+            <th>查看</th>
+          </tr>
+        </thead>
+        <tbody id="resultBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Intro -->
+  <div id="intro">
+    <div class="intro-icon">⚡</div>
+    <div class="intro-title">量能趨勢篩選</div>
+    <div class="intro-desc">
+      自動掃描 TWSE 上市 + TPEX 上櫃漲幅排行，篩選出
+      <strong style="color:var(--accent)">5日均量 &gt; 20日均量</strong> 且連續
+      <strong style="color:var(--warn)">2 ～ 5 個交易日</strong> 持續此狀態的個股。
+    </div>
+    <div class="how-it-works">
+      <div class="how-card"><div class="step">🌐</div><h3>抓取排行榜</h3><p>從 TWSE/TPEX 公開 API 取得當日強勢個股清單</p></div>
+      <div class="how-card"><div class="step">📐</div><h3>計算均量</h3><p>取得近 60 日歷史量能，計算 5 日和 20 日移動平均</p></div>
+      <div class="how-card"><div class="step">🎯</div><h3>篩選條件</h3><p>找出 5MA > 20MA 連續 3～5 日的量能放大個股</p></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Detail Modal -->
+<div id="modal">
+  <div class="modal-box">
+    <div class="modal-header">
+      <div>
+        <div class="stock-code" id="modalCode" style="font-size:20px;"></div>
+        <div class="stock-name" id="modalName" style="font-size:14px;margin-top:4px;"></div>
+      </div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <canvas id="chartCanvas"></canvas>
+    <div class="detail-grid" id="detailGrid"></div>
+  </div>
+</div>
+
+<script>
+let allData = [];
+let currentFilter = 0;
+let sortField = 'consecutive_days';
+let sortDir = -1;
+let pollTimer = null;
+
+async function startScan() {
+  const btn  = document.getElementById('scanBtn');
+  const icon = document.getElementById('scanIcon');
+  const text = document.getElementById('scanText');
+
+  btn.disabled = true;
+  icon.innerHTML = '<span class="spin">⟳</span>';
+  text.textContent = '掃描中...';
+
+  document.getElementById('intro').style.display = 'none';
+  document.getElementById('tableWrap').style.display = 'none';
+  document.getElementById('statsRow').style.display = 'none';
+  document.getElementById('errBanner').style.display = 'none';
+  document.getElementById('progressCard').style.display = 'block';
+  document.getElementById('progFill').style.width = '0%';
+  document.getElementById('progLabel').textContent = '正在建立任務...';
+  document.getElementById('progCount').textContent = '';
+  document.getElementById('progFound').textContent = '';
+
+  try {
+    // 1. 建立任務
+    const resp = await fetch('/api/analyze/start', { method: 'POST' });
+    const { task_id } = await resp.json();
+
+    // 2. 開始輪詢狀態
+    pollTask(task_id, btn, icon, text);
+
+  } catch (err) {
+    showError('無法連線到伺服器：' + err.message);
+    resetBtn(btn, icon, text);
+  }
+}
+
+function pollTask(task_id, btn, icon, text) {
+  let foundCount = 0;
+
+  pollTimer = setInterval(async () => {
+    try {
+      const resp = await fetch(`/api/analyze/status/${task_id}`);
+      const task = await resp.json();
+
+      if (task.error) {
+        clearInterval(pollTimer);
+        showError(task.error);
+        resetBtn(btn, icon, text);
+        return;
+      }
+
+      // 更新進度 UI
+      if (task.status === 'fetching' || task.status === 'pending') {
+        document.getElementById('progLabel').textContent = task.msg;
+
+      } else if (task.status === 'analyzing') {
+        const pct = task.total > 0 ? Math.round((task.current / task.total) * 100) : 0;
+        document.getElementById('progFill').style.width = pct + '%';
+        document.getElementById('progLabel').textContent = task.msg;
+        document.getElementById('progCount').textContent = `${task.current} / ${task.total}`;
+        document.getElementById('progStock').textContent =
+          task.current_code ? `🔍 ${task.current_code} ${task.current_name}` : '';
+        if (task.total_found > foundCount) {
+          foundCount = task.total_found;
+          document.getElementById('progFound').textContent = `✅ 已找到 ${foundCount} 支符合個股`;
+        }
+
+      } else if (task.status === 'done') {
+        clearInterval(pollTimer);
+
+        document.getElementById('progressCard').style.display = 'none';
+        allData = task.stocks;
+        renderStats(task);
+        renderTable(allData);
+        document.getElementById('scanTime').textContent = `掃描時間：${task.timestamp}`;
+        resetBtn(btn, icon, text);
+
+      } else if (task.status === 'error') {
+        clearInterval(pollTimer);
+        document.getElementById('progressCard').style.display = 'none';
+        showError(task.msg);
+        resetBtn(btn, icon, text);
+      }
+
+    } catch (err) {
+      clearInterval(pollTimer);
+      showError('輪詢失敗：' + err.message);
+      resetBtn(btn, icon, text);
+    }
+  }, 1500);
+}
+
+function resetBtn(btn, icon, text) {
+  btn.disabled = false;
+  icon.innerHTML = '🔍';
+  text.textContent = '重新掃描';
+}
+
+function showError(msg) {
+  document.getElementById('progressCard').style.display = 'none';
+  document.getElementById('errBanner').style.display = 'flex';
+  document.getElementById('errMsg').textContent = msg;
+}
+
+function renderStats(data) {
+  document.getElementById('statsRow').style.display = 'flex';
+  document.getElementById('statMatched').textContent = data.total_found ?? data.total;
+  document.getElementById('statScanned').textContent = data.scanned;
+  document.getElementById('statTime').textContent = data.elapsed;
+  const maxDays = data.stocks.length > 0
+    ? Math.max(...data.stocks.map(s => s.consecutive_days)) : '-';
+  document.getElementById('statMaxDays').textContent = maxDays;
+}
+
+function renderTable(stocks) {
+  document.getElementById('tableWrap').style.display = 'block';
+  const filtered = currentFilter > 0 ? stocks.filter(s => s.consecutive_days === currentFilter) : stocks;
+  document.getElementById('resultCount').textContent = `${filtered.length} 支`;
+
+  if (filtered.length === 0) {
+    document.getElementById('emptyState').style.display = 'block';
+    document.getElementById('resultTable').style.display = 'none';
+    return;
+  }
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('resultTable').style.display = 'table';
+
+  const tbody = document.getElementById('resultBody');
+  tbody.innerHTML = filtered.map(s => {
+    const changePct  = s.change_pct || 0;
+    const changeSign = changePct >= 0 ? '+' : '';
+    const changeClass = changePct >= 0 ? 'change-pos' : 'change-neg';
+    const daysClass = s.consecutive_days === 5 ? 'days-5' : s.consecutive_days === 4 ? 'days-4' : s.consecutive_days === 3 ? 'days-3' : 'days-2';
+    const ratio = s.ratio || 1;
+    const pct = Math.min((ratio - 1) * 200, 100);
+    const mktClass = s.market === '上市' ? 'mkt-tw' : 'mkt-two';
+
+    return `<tr onclick="showDetail('${s.code}','${s.name}')">
+      <td>
+        <div class="stock-code">${s.code}</div>
+        <div class="stock-name">${s.name || '-'}</div>
+        <span class="mkt-badge ${mktClass}">${s.market || ''}</span>
+      </td>
+      <td class="num ${changeClass}">${changeSign}${changePct.toFixed(2)}%</td>
+      <td style="text-align:center;"><span class="days-badge ${daysClass}">${s.consecutive_days}</span></td>
+      <td class="num" style="color:var(--accent)">${fmtVol(s.ma5_volume)}</td>
+      <td class="num" style="color:var(--muted)">${fmtVol(s.ma20_volume)}</td>
+      <td>
+        <div class="ratio-bar">
+          <div class="ratio-track"><div class="ratio-fill" style="width:${pct}%"></div></div>
+          <span class="vol-num">${ratio.toFixed(2)}x</span>
+        </div>
+      </td>
+      <td>
+        <a href="https://tw.stock.yahoo.com/quote/${s.code}.TW" target="_blank" onclick="event.stopPropagation()"
+           style="color:var(--accent2);font-size:12px;text-decoration:none;padding:4px 10px;
+                  border:1px solid rgba(0,132,255,0.3);border-radius:6px;background:rgba(0,132,255,0.1);">
+          ↗
+        </a>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function fmtVol(n) {
+  if (!n) return '-';
+  if (n >= 1e8) return (n/1e8).toFixed(1) + '億';
+  if (n >= 1e4) return Math.round(n/1e3) + 'K';
+  return n.toString();
+}
+
+function filterDays(days, el) {
+  currentFilter = days;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  if (el) el.classList.add('active');
+  renderTable(allData);
+}
+
+function sortTable(field) {
+  if (sortField === field) sortDir *= -1;
+  else { sortField = field; sortDir = -1; }
+  allData.sort((a, b) => {
+    const av = a[field] ?? 0, bv = b[field] ?? 0;
+    if (typeof av === 'string') return av.localeCompare(bv) * sortDir;
+    return (av - bv) * sortDir;
+  });
+  renderTable(allData);
+}
+
+async function showDetail(code, name) {
+  document.getElementById('modal').classList.add('open');
+  document.getElementById('modalCode').textContent = code;
+  document.getElementById('modalName').textContent = name || code;
+  document.getElementById('detailGrid').innerHTML =
+    '<div style="color:var(--muted);text-align:center;padding:20px;grid-column:1/-1">載入中...</div>';
+  try {
+    const resp = await fetch(`/api/stock/${code}`);
+    const data = await resp.json();
+    drawChart(data);
+    const stock = allData.find(s => s.code === code);
+    if (stock) {
+      document.getElementById('detailGrid').innerHTML = `
+        <div class="detail-item"><div class="label">連續天數</div><div class="value" style="color:var(--accent)">${stock.consecutive_days} 日</div></div>
+        <div class="detail-item"><div class="label">5日均量</div><div class="value" style="color:var(--bull)">${fmtVol(stock.ma5_volume)}</div></div>
+        <div class="detail-item"><div class="label">20日均量</div><div class="value" style="color:var(--muted)">${fmtVol(stock.ma20_volume)}</div></div>
+        <div class="detail-item"><div class="label">均量比率</div><div class="value" style="color:var(--accent2)">${stock.ratio}x</div></div>
+        <div class="detail-item"><div class="label">今日漲幅</div>
+          <div class="value" style="color:${stock.change_pct>=0?'var(--bull)':'var(--bear)'}">
+            ${stock.change_pct>=0?'+':''}${stock.change_pct}%
+          </div></div>
+        <div class="detail-item"><div class="label">今日股價</div><div class="value">${stock.price || '-'}</div></div>`;
+    }
+  } catch(e) {
+    document.getElementById('detailGrid').innerHTML =
+      '<div style="color:var(--bear);grid-column:1/-1;text-align:center;padding:20px;">無法載入資料</div>';
+  }
+}
+
+function drawChart(data) {
+  const canvas = document.getElementById('chartCanvas');
+  const ctx = canvas.getContext('2d');
+  canvas.width = canvas.offsetWidth;
+  canvas.height = canvas.offsetHeight;
+  const w = canvas.width, h = canvas.height;
+  const pad = { top:16, right:16, bottom:32, left:60 };
+  const plotW = w - pad.left - pad.right, plotH = h - pad.top - pad.bottom;
+  ctx.clearRect(0,0,w,h);
+  const n = data.dates.length;
+  if (n === 0) return;
+  const allVals = [...data.volume, ...data.ma5.filter(v=>v), ...data.ma20.filter(v=>v)].filter(v=>v>0);
+  const maxV = Math.max(...allVals) * 1.1;
+  const xScale = i => pad.left + (i/(n-1)) * plotW;
+  const yScale = v => pad.top + plotH - (v/maxV) * plotH;
+  // Grid
+  for (let i=0; i<=4; i++) {
+    const y = pad.top + (plotH/4)*i;
+    ctx.strokeStyle='rgba(30,45,71,0.8)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(pad.left,y); ctx.lineTo(w-pad.right,y); ctx.stroke();
+    ctx.fillStyle='#4a5568'; ctx.font='10px JetBrains Mono'; ctx.textAlign='right';
+    ctx.fillText(fmtVol(maxV*(1-i/4)), pad.left-6, y+3);
+  }
+  // Volume bars
+  const barW = Math.max(1, plotW/n - 1);
+  data.volume.forEach((v,i) => {
+    if (!v) return;
+    const x=xScale(i), y=yScale(v), bh=pad.top+plotH-y;
+    ctx.fillStyle='rgba(0,132,255,0.35)';
+    ctx.fillRect(x-barW/2,y,barW,bh);
+  });
+  // MA lines
+  const drawLine = (vals, color, dash=[]) => {
+    const pts = vals.map((v,i) => v!==null?[xScale(i),yScale(v)]:null).filter(Boolean);
+    if (pts.length<2) return;
+    ctx.setLineDash(dash); ctx.strokeStyle=color; ctx.lineWidth=2;
+    ctx.beginPath(); pts.forEach(([x,y],i)=>i===0?ctx.moveTo(x,y):ctx.lineTo(x,y)); ctx.stroke();
+    ctx.setLineDash([]);
+  };
+  drawLine(data.ma20,'rgba(255,181,71,0.8)',[5,3]);
+  drawLine(data.ma5,'rgba(0,212,170,1)');
+  // Legend
+  [['rgba(0,212,170,1)','5日均量',false],['rgba(255,181,71,0.8)','20日均量',true]].forEach(([c,l,d],i)=>{
+    const lx=pad.left+i*110, ly=h-12;
+    ctx.setLineDash(d?[4,2]:[]); ctx.strokeStyle=c; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(lx,ly); ctx.lineTo(lx+20,ly); ctx.stroke();
+    ctx.setLineDash([]); ctx.fillStyle='#94a3b8'; ctx.font='10px Noto Sans TC'; ctx.textAlign='left';
+    ctx.fillText(l, lx+24, ly+3);
+  });
+  // X-axis
+  ctx.fillStyle='#4a5568'; ctx.font='9px JetBrains Mono'; ctx.textAlign='center';
+  [0,Math.floor(n/4),Math.floor(n/2),Math.floor(3*n/4),n-1].forEach(i=>{
+    if(data.dates[i]) ctx.fillText(data.dates[i].slice(5), xScale(i), h-4);
+  });
+}
+
+function closeModal() { document.getElementById('modal').classList.remove('open'); }
+document.getElementById('modal').addEventListener('click', e => {
+  if (e.target===document.getElementById('modal')) closeModal();
+});
+</script>
+</body>
+</html>
