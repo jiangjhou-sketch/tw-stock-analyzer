@@ -1,18 +1,41 @@
 #!/usr/bin/env python3
 """
-台股均量追蹤系統 v4 - 技術分析版
-資料來源：TWSE + TPEX 公開 API
-指標：均量條件 + KD / MACD / 布林通道
+台股均量分析工具 v3 - 雲端部署版
+使用背景執行緒 + 輪詢，避免雲端環境 SSE timeout 問題
 """
 
-import requests, time, re, json, threading, uuid, os, io
+import requests
+import time
+import re
+import json
+import threading
+import uuid
 from datetime import datetime
-from flask import Flask, jsonify, send_from_directory, request, send_file
+from flask import Flask, jsonify, send_from_directory, request
 import yfinance as yf
 import pandas as pd
-import numpy as np
+import os
 
 app = Flask(__name__, static_folder='static')
+
+@app.after_request
+def add_json_header(response):
+    """確保 API 路由回傳正確的 Content-Type"""
+    if response.status_code == 404 and not response.content_type.startswith('application/json'):
+        import json as _json
+        response.data = _json.dumps({'error': f'找不到路由', 'status': 404})
+        response.content_type = 'application/json'
+    return response
+
+@app.errorhandler(404)
+def not_found(e):
+    from flask import jsonify as _jsonify
+    return _jsonify({'error': '找不到此路由', 'status': 404}), 404
+
+@app.errorhandler(500)
+def server_error(e):
+    from flask import jsonify as _jsonify
+    return _jsonify({'error': f'伺服器內部錯誤：{str(e)}', 'status': 500}), 500
 
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -20,55 +43,43 @@ HEADERS = {
     'Accept-Language': 'zh-TW,zh;q=0.9',
 }
 
-tasks = {}   # task_id -> task_state
+# ── 任務狀態儲存（記憶體）──
+tasks = {}  # task_id -> task_state
 
 
-# ══════════════════════════════════════════════
-# 錯誤處理
-# ══════════════════════════════════════════════
-@app.after_request
-def add_json_header(response):
-    if response.status_code == 404 and not response.content_type.startswith('application/json'):
-        response.data = json.dumps({'error': '找不到路由', 'status': 404})
-        response.content_type = 'application/json'
-    return response
-
-@app.errorhandler(404)
-def not_found(e):
-    return jsonify({'error': '找不到此路由', 'status': 404}), 404
-
-@app.errorhandler(500)
-def server_error(e):
-    return jsonify({'error': f'伺服器內部錯誤：{str(e)}', 'status': 500}), 500
-
-
-# ══════════════════════════════════════════════
-# TWSE + TPEX 行情資料
-# ══════════════════════════════════════════════
+# ──────────────────────────────────────────────
+# TWSE + TPEX 資料取得
+# ──────────────────────────────────────────────
 def get_twse_stocks():
     stocks = []
     try:
         url = "https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY_ALL"
         resp = requests.get(url, params={"response": "json"}, headers=HEADERS, timeout=20)
         resp.raise_for_status()
-        for row in resp.json().get('data', []):
+        data = resp.json()
+        for row in data.get('data', []):
             try:
                 code = row[0].strip()
+                name = row[1].strip()
                 if not re.match(r'^\d{4}$', code):
                     continue
-                name   = row[1].strip()
                 close  = float(row[7].replace(',', '').strip())
                 change = float(row[8].replace(',', '').strip())
                 prev   = close - change
-                if prev <= 0: continue
-                chg_pct = round((change / prev) * 100, 2)
-                if chg_pct <= 0: continue
-                stocks.append({'code': code, 'symbol': f"{code}.TW",  'name': name,
-                                'change_pct': chg_pct, 'price': close,
-                                'volume': int(row[2].replace(',', '')), 'market': '上市'})
+                if prev <= 0:
+                    continue
+                change_pct = round((change / prev) * 100, 2)
+                if change_pct <= 0:
+                    continue
+                vol = int(row[2].replace(',', ''))
+                stocks.append({
+                    'code': code, 'symbol': f"{code}.TW", 'name': name,
+                    'change_pct': change_pct, 'price': close,
+                    'volume': vol, 'market': '上市',
+                })
             except Exception:
                 continue
-        print(f"[TWSE] 上漲：{len(stocks)} 支")
+        print(f"[TWSE] 上漲個股：{len(stocks)} 支")
     except Exception as e:
         print(f"[TWSE] 失敗：{e}")
     return stocks
@@ -80,235 +91,129 @@ def get_tpex_stocks():
         url = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes"
         resp = requests.get(url, headers=HEADERS, timeout=20)
         resp.raise_for_status()
-        for item in resp.json():
+        data = resp.json()
+        for item in data:
             try:
                 code = str(item.get('SecuritiesCompanyCode', '')).strip()
-                if not re.match(r'^\d{4,5}$', code): continue
-                name   = str(item.get('CompanyName', '')).strip()
+                name = str(item.get('CompanyName', '')).strip()
+                if not re.match(r'^\d{4,5}$', code):
+                    continue
                 close  = float(str(item.get('Close',  '0')).replace(',', '') or 0)
                 change = float(str(item.get('Change', '0')).replace(',', '') or 0)
-                if close <= 0: continue
+                if close <= 0:
+                    continue
                 prev = close - change
-                if prev <= 0: continue
-                chg_pct = round((change / prev) * 100, 2)
-                if chg_pct <= 0: continue
-                vol_s = str(item.get('TradeVolume', '0')).replace(',', '')
-                stocks.append({'code': code, 'symbol': f"{code}.TWO", 'name': name,
-                                'change_pct': chg_pct, 'price': close,
-                                'volume': int(float(vol_s)) if vol_s else 0, 'market': '上櫃'})
+                if prev <= 0:
+                    continue
+                change_pct = round((change / prev) * 100, 2)
+                if change_pct <= 0:
+                    continue
+                vol_str = str(item.get('TradeVolume', '0')).replace(',', '')
+                vol = int(float(vol_str)) if vol_str else 0
+                stocks.append({
+                    'code': code, 'symbol': f"{code}.TWO", 'name': name,
+                    'change_pct': change_pct, 'price': close,
+                    'volume': vol, 'market': '上櫃',
+                })
             except Exception:
                 continue
-        print(f"[TPEX] 上漲：{len(stocks)} 支")
+        print(f"[TPEX] 上漲個股：{len(stocks)} 支")
     except Exception as e:
         print(f"[TPEX] 失敗：{e}")
     return stocks
 
 
+# 掃描模式說明：
+#  twse        - 上市漲幅前100
+#  tpex        - 上櫃漲幅前100
+#  combined    - 上市+上櫃合併後漲幅前100
+#  both        - 上市前100 + 上櫃前100（共200支）
 def get_ranking_stocks(top_n=100, mode='both'):
     if mode == 'twse':
-        s = get_twse_stocks(); s.sort(key=lambda x: -x['change_pct']); return s[:top_n]
-    if mode == 'tpex':
-        s = get_tpex_stocks(); s.sort(key=lambda x: -x['change_pct']); return s[:top_n]
-    if mode == 'combined':
-        s = get_twse_stocks() + get_tpex_stocks(); s.sort(key=lambda x: -x['change_pct']); return s[:top_n]
-    # both
-    tw = get_twse_stocks(); tw.sort(key=lambda x: -x['change_pct'])
-    tp = get_tpex_stocks(); tp.sort(key=lambda x: -x['change_pct'])
-    return tw[:top_n] + tp[:top_n]
+        stocks = get_twse_stocks()
+        stocks.sort(key=lambda x: -x['change_pct'])
+        result = stocks[:top_n]
+        print(f"[模式:上市] 前{len(result)}名")
+    elif mode == 'tpex':
+        stocks = get_tpex_stocks()
+        stocks.sort(key=lambda x: -x['change_pct'])
+        result = stocks[:top_n]
+        print(f"[模式:上櫃] 前{len(result)}名")
+    elif mode == 'combined':
+        stocks = get_twse_stocks() + get_tpex_stocks()
+        stocks.sort(key=lambda x: -x['change_pct'])
+        result = stocks[:top_n]
+        print(f"[模式:合併] 上市+上櫃合計前{len(result)}名")
+    else:  # both
+        twse = get_twse_stocks()
+        tpex = get_tpex_stocks()
+        twse.sort(key=lambda x: -x['change_pct'])
+        tpex.sort(key=lambda x: -x['change_pct'])
+        result = twse[:top_n] + tpex[:top_n]
+        print(f"[模式:全掃] 上市前{len(twse[:top_n])}名 + 上櫃前{len(tpex[:top_n])}名 = {len(result)} 支")
+    return result
 
 
-# ══════════════════════════════════════════════
-# 取得 OHLCV（Open / High / Low / Close / Volume）
-# ══════════════════════════════════════════════
-def get_ohlcv(symbol, days=90):
-    """取得足夠天數的 OHLCV 資料（需要至少 60 根計算 MACD）"""
+def get_volume_data(symbol, days=60):
     try:
         ticker = yf.Ticker(symbol)
-        hist   = ticker.history(period=f"{days}d")
+        hist = ticker.history(period=f"{days}d")
         if hist.empty:
-            alt  = symbol.replace('.TW', '.TWO') if symbol.endswith('.TW') else symbol.replace('.TWO', '.TW')
+            alt = symbol.replace('.TW', '.TWO') if symbol.endswith('.TW') else symbol.replace('.TWO', '.TW')
             hist = yf.Ticker(alt).history(period=f"{days}d")
             if not hist.empty:
-                return hist, alt
-        return (hist, symbol) if not hist.empty else (None, symbol)
-    except Exception:
+                return hist['Volume'], alt
+        return (hist['Volume'], symbol) if not hist.empty else (None, symbol)
+    except Exception as e:
         return None, symbol
 
 
-# ══════════════════════════════════════════════
-# 技術指標計算（純 pandas / numpy，不需額外套件）
-# ══════════════════════════════════════════════
-def calc_kd(high, low, close, n=9, m1=3, m2=3):
-    """
-    KD 隨機指標（台式 9 日 KD）
-    回傳 K、D 最新值及交叉訊號
-    """
-    low_n  = low.rolling(n).min()
-    high_n = high.rolling(n).max()
-    denom  = high_n - low_n
-    rsv    = np.where(denom == 0, 50.0,
-                      (close - low_n) / denom * 100)
-    rsv_s  = pd.Series(rsv, index=close.index)
-
-    K = pd.Series(50.0, index=close.index, dtype=float)
-    D = pd.Series(50.0, index=close.index, dtype=float)
-    for i in range(1, len(rsv_s)):
-        K.iloc[i] = (m1 - 1) / m1 * K.iloc[i-1] + 1 / m1 * rsv_s.iloc[i]
-        D.iloc[i] = (m2 - 1) / m2 * D.iloc[i-1] + 1 / m2 * K.iloc[i]
-
-    k_cur, k_prev = round(K.iloc[-1], 2), round(K.iloc[-2], 2)
-    d_cur, d_prev = round(D.iloc[-1], 2), round(D.iloc[-2], 2)
-
-    # 黃金交叉：K 由下往上穿越 D；死亡交叉：K 由上往下穿越 D
-    golden = (k_prev < d_prev) and (k_cur > d_cur)
-    death  = (k_prev > d_prev) and (k_cur < d_cur)
-    oversold   = k_cur < 20          # 超賣區
-    overbought = k_cur > 80          # 超買區
-    k_above_d  = k_cur > d_cur
-
-    return {
-        'k': k_cur, 'd': d_cur,
-        'kd_golden': golden,
-        'kd_death':  death,
-        'kd_oversold':   oversold,
-        'kd_overbought': overbought,
-        'kd_k_above_d':  k_above_d,
-        'kd_signal': ('黃金交叉' if golden else
-                      '死亡交叉' if death  else
-                      '超賣區'   if oversold else
-                      '多頭排列' if k_above_d else '空頭排列'),
-    }
-
-
-def calc_macd(close, fast=12, slow=26, signal=9):
-    """
-    MACD（指數移動平均差）
-    回傳 MACD 線、訊號線、柱狀圖最新值及交叉訊號
-    """
-    ema_fast   = close.ewm(span=fast,   adjust=False).mean()
-    ema_slow   = close.ewm(span=slow,   adjust=False).mean()
-    macd_line  = ema_fast - ema_slow
-    sig_line   = macd_line.ewm(span=signal, adjust=False).mean()
-    histogram  = macd_line - sig_line
-
-    m_cur  = round(macd_line.iloc[-1], 4)
-    m_prev = round(macd_line.iloc[-2], 4)
-    s_cur  = round(sig_line.iloc[-1],  4)
-    s_prev = round(sig_line.iloc[-2],  4)
-    h_cur  = round(histogram.iloc[-1], 4)
-    h_prev = round(histogram.iloc[-2], 4)
-
-    golden   = (m_prev < s_prev) and (m_cur > s_cur)
-    death    = (m_prev > s_prev) and (m_cur < s_cur)
-    above_zero = m_cur > 0
-    hist_expand = h_cur > 0 and h_cur > h_prev  # 柱狀圖正向擴張
-
-    return {
-        'macd': m_cur, 'macd_signal': s_cur, 'macd_hist': h_cur,
-        'macd_golden':      golden,
-        'macd_death':       death,
-        'macd_above_zero':  above_zero,
-        'macd_hist_expand': hist_expand,
-        'macd_signal_str': ('黃金交叉' if golden  else
-                             '死亡交叉' if death   else
-                             '零軸上方' if above_zero else '零軸下方'),
-    }
-
-
-def calc_bband(close, n=20, k=2):
-    """
-    布林通道（Bollinger Bands）
-    回傳上軌、中軌、下軌及目前位置訊號
-    """
-    mid    = close.rolling(n).mean()
-    std    = close.rolling(n).std()
-    upper  = mid + k * std
-    lower  = mid - k * std
-    bw     = ((upper - lower) / mid * 100)  # 帶寬 %
-
-    c_cur   = close.iloc[-1]
-    u_cur   = round(upper.iloc[-1], 2)
-    m_cur   = round(mid.iloc[-1],   2)
-    l_cur   = round(lower.iloc[-1], 2)
-    bw_cur  = round(bw.iloc[-1],    2)
-
-    # 位置：0=下軌 ~ 1=上軌
-    pos = round((c_cur - l_cur) / (u_cur - l_cur), 3) if (u_cur - l_cur) > 0 else 0.5
-
-    near_upper = c_cur >= u_cur * 0.99    # 突破或接近上軌
-    near_lower = c_cur <= l_cur * 1.01    # 觸及或接近下軌
-    above_mid  = c_cur > m_cur
-
-    return {
-        'bb_upper': u_cur, 'bb_mid': m_cur, 'bb_lower': l_cur,
-        'bb_width': bw_cur, 'bb_pos': pos,
-        'bb_near_upper': near_upper,
-        'bb_near_lower': near_lower,
-        'bb_above_mid':  above_mid,
-        'bb_signal': ('突破上軌' if near_upper else
-                      '接近下軌' if near_lower else
-                      '中軌以上' if above_mid  else '中軌以下'),
-    }
-
-
-def calc_all_ta(hist):
-    """整合計算所有技術指標，回傳 dict；失敗傳回空 dict"""
-    try:
-        if hist is None or len(hist) < 30:
-            return {}
-        high  = hist['High']
-        low   = hist['Low']
-        close = hist['Close']
-        ta = {}
-        ta.update(calc_kd(high, low, close))
-        ta.update(calc_macd(close))
-        ta.update(calc_bband(close))
-        return ta
-    except Exception as e:
-        print(f"  [TA] 計算失敗：{e}")
-        return {}
-
-
-# ══════════════════════════════════════════════
-# 均量條件
-# ══════════════════════════════════════════════
 def analyze_volume_condition(volume_series, min_days=2, max_days=5):
     if volume_series is None or len(volume_series) < 25:
         return None
     ma5  = volume_series.rolling(window=5).mean()
     ma20 = volume_series.rolling(window=20).mean()
-    df   = pd.DataFrame({'ma5': ma5, 'ma20': ma20}).dropna()
-    if len(df) == 0:
+    combined = pd.DataFrame({'ma5': ma5, 'ma20': ma20}).dropna()
+    if len(combined) == 0:
         return None
-    cond = df['ma5'] > df['ma20']
+    condition = combined['ma5'] > combined['ma20']
     consecutive = 0
-    for v in reversed(cond.values):
-        if v: consecutive += 1
-        else: break
+    for val in reversed(condition.values):
+        if val:
+            consecutive += 1
+        else:
+            break
     if not (min_days <= consecutive <= max_days):
         return None
+    latest_ma5  = round(combined['ma5'].iloc[-1])
+    latest_ma20 = round(combined['ma20'].iloc[-1])
+    ratio = round(latest_ma5 / latest_ma20, 3) if latest_ma20 > 0 else 0
     return {
         'consecutive_days': consecutive,
-        'ma5_volume':  int(round(df['ma5'].iloc[-1])),
-        'ma20_volume': int(round(df['ma20'].iloc[-1])),
-        'ratio': round(df['ma5'].iloc[-1] / df['ma20'].iloc[-1], 3) if df['ma20'].iloc[-1] > 0 else 0,
+        'ma5_volume':  int(latest_ma5),
+        'ma20_volume': int(latest_ma20),
+        'ratio': ratio,
     }
 
 
-# ══════════════════════════════════════════════
-# 背景任務
-# ══════════════════════════════════════════════
+# ──────────────────────────────────────────────
+# 背景執行緒執行分析任務
+# ──────────────────────────────────────────────
 def run_analysis_task(task_id):
     task = tasks[task_id]
     task['status'] = 'fetching'
+    task['msg'] = '正在從 TWSE / TPEX 取得漲幅排行榜...'
     start_time = time.time()
 
     try:
         mode = task.get('mode', 'both')
-        mode_labels = {'twse':'上市前100', 'tpex':'上櫃前100',
-                       'combined':'合併前100', 'both':'上市前100+上櫃前100'}
+        mode_labels = {
+            'twse':     '上市漲幅前100名',
+            'tpex':     '上櫃漲幅前100名',
+            'combined': '上市+上櫃合併漲幅前100名',
+            'both':     '上市前100 + 上櫃前100（共200名）',
+        }
         task['msg'] = f"正在取得【{mode_labels.get(mode,mode)}】排行榜..."
-
         stocks = get_ranking_stocks(top_n=100, mode=mode)
         if not stocks:
             task['status'] = 'error'
@@ -318,69 +223,77 @@ def run_analysis_task(task_id):
         total = len(stocks)
         task['total'] = total
         task['status'] = 'analyzing'
-        task['msg'] = f'取得 {total} 支個股，計算均量＋技術指標...'
+        task['msg'] = f'取得 {total} 支個股，開始分析均量條件...'
 
         qualified = []
         for i, stock in enumerate(stocks):
-            task['current']      = i + 1
+            task['current'] = i + 1
             task['current_code'] = stock['code']
             task['current_name'] = stock['name']
 
-            hist, actual_symbol = get_ohlcv(stock['symbol'], days=90)
-            vol_result = analyze_volume_condition(
-                hist['Volume'] if hist is not None else None)
-
-            if vol_result:
-                ta = calc_all_ta(hist)
-                entry = {**stock, 'symbol': actual_symbol, **vol_result, **ta}
-                qualified.append(entry)
-                task['total_found'] = len(qualified)
-
+            volume_data, actual_symbol = get_volume_data(stock['symbol'])
+            result = analyze_volume_condition(volume_data)
+            if result:
+                qualified.append({**stock, 'symbol': actual_symbol, **result})
             time.sleep(0.15)
 
         qualified.sort(key=lambda x: (-x['consecutive_days'], -x['ratio']))
         elapsed = round(time.time() - start_time, 1)
 
-        task.update({
-            'status': 'done', 'stocks': qualified,
-            'total_found': len(qualified), 'scanned': total,
-            'elapsed': elapsed,
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'msg': f'完成！找到 {len(qualified)} 支符合均量條件個股',
-        })
+        task['status']    = 'done'
+        task['stocks']    = qualified
+        task['total_found'] = len(qualified)
+        task['scanned']   = total
+        task['elapsed']   = elapsed
+        task['timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        task['msg']       = f'完成！找到 {len(qualified)} 支符合條件個股'
 
     except Exception as e:
         task['status'] = 'error'
         task['msg'] = f'分析過程發生錯誤：{str(e)}'
 
 
-# ══════════════════════════════════════════════
+# ──────────────────────────────────────────────
 # Flask Routes
-# ══════════════════════════════════════════════
+# ──────────────────────────────────────────────
 @app.route('/')
 def index():
+    # 兼容本機和雲端路徑
     static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
     return send_from_directory(static_dir, 'index.html')
 
 
 @app.route('/api/analyze/start', methods=['POST', 'GET'])
 def analyze_start():
+    """建立分析任務，回傳 task_id"""
     body = request.get_json(silent=True) or {}
     mode = body.get('mode', 'both')
     if mode not in ('twse', 'tpex', 'combined', 'both'):
         mode = 'both'
+
     task_id = str(uuid.uuid4())[:8]
     tasks[task_id] = {
-        'status': 'pending', 'msg': '準備開始...', 'mode': mode,
-        'current': 0, 'total': 0, 'current_code': '', 'current_name': '',
-        'stocks': [], 'total_found': 0, 'scanned': 0, 'elapsed': 0, 'timestamp': '',
+        'status': 'pending',
+        'msg': '準備開始...',
+        'mode': mode,
+        'current': 0,
+        'total': 0,
+        'current_code': '',
+        'current_name': '',
+        'stocks': [],
+        'total_found': 0,
+        'scanned': 0,
+        'elapsed': 0,
+        'timestamp': '',
     }
-    threading.Thread(target=run_analysis_task, args=(task_id,), daemon=True).start()
+    t = threading.Thread(target=run_analysis_task, args=(task_id,), daemon=True)
+    t.start()
     return jsonify({'task_id': task_id})
 
 
 @app.route('/api/analyze/status/<task_id>')
 def analyze_status(task_id):
+    """輪詢任務狀態（每 1.5 秒呼叫一次）"""
     task = tasks.get(task_id)
     if not task:
         return jsonify({'error': '找不到任務'}), 404
@@ -389,311 +302,345 @@ def analyze_status(task_id):
 
 @app.route('/api/stock/<code>')
 def stock_detail(code):
-    """取得個股完整歷史（OHLCV + 技術指標序列，供圖表繪製）"""
-    hist, actual_symbol = get_ohlcv(f"{code}.TW", days=90)
-    if hist is None:
-        hist, actual_symbol = get_ohlcv(f"{code}.TWO", days=90)
-    if hist is None:
+    volume_data, actual_symbol = get_volume_data(f"{code}.TW", days=60)
+    if volume_data is None:
+        volume_data, actual_symbol = get_volume_data(f"{code}.TWO", days=60)
+    if volume_data is None:
         return jsonify({'error': f'無法取得 {code} 的資料'}), 404
 
-    close  = hist['Close']
-    high   = hist['High']
-    low    = hist['Low']
-    volume = hist['Volume']
-    dates  = [d.strftime('%Y-%m-%d') for d in hist.index]
-
-    def s(series):
-        return [round(v, 4) if not pd.isna(v) else None for v in series]
-
-    # Volume MAs
-    ma5v  = volume.rolling(5).mean()
-    ma20v = volume.rolling(20).mean()
-
-    # Price MAs
-    ma5p  = close.rolling(5).mean()
-    ma20p = close.rolling(20).mean()
-
-    # MACD series
-    ema12     = close.ewm(span=12, adjust=False).mean()
-    ema26     = close.ewm(span=26, adjust=False).mean()
-    macd_line = ema12 - ema26
-    sig_line  = macd_line.ewm(span=9, adjust=False).mean()
-    histogram = macd_line - sig_line
-
-    # KD series
-    low9  = low.rolling(9).min()
-    high9 = high.rolling(9).max()
-    denom = high9 - low9
-    rsv   = np.where(denom == 0, 50.0, (close - low9) / denom * 100)
-    rsv_s = pd.Series(rsv, index=close.index)
-    K     = pd.Series(50.0, index=close.index, dtype=float)
-    D     = pd.Series(50.0, index=close.index, dtype=float)
-    for i in range(1, len(rsv_s)):
-        K.iloc[i] = 2/3 * K.iloc[i-1] + 1/3 * rsv_s.iloc[i]
-        D.iloc[i] = 2/3 * D.iloc[i-1] + 1/3 * K.iloc[i]
-
-    # Bollinger Bands
-    bb_mid   = close.rolling(20).mean()
-    bb_std   = close.rolling(20).std()
-    bb_upper = bb_mid + 2 * bb_std
-    bb_lower = bb_mid - 2 * bb_std
-
-    def iv(series):  # int list for volume
-        return [int(v) if not pd.isna(v) else None for v in series]
+    ma5  = volume_data.rolling(5).mean()
+    ma20 = volume_data.rolling(20).mean()
+    dates = [d.strftime('%Y-%m-%d') for d in volume_data.index]
 
     return jsonify({
         'code': code, 'symbol': actual_symbol, 'dates': dates,
-        'open':  s(hist['Open']),
-        'high':  s(high),
-        'low':   s(low),
-        'close': s(close),
-        'volume': iv(volume),
-        'ma5v': iv(ma5v), 'ma20v': iv(ma20v),
-        'ma5p': s(ma5p),  'ma20p': s(ma20p),
-        'macd': s(macd_line), 'macd_signal': s(sig_line), 'macd_hist': s(histogram),
-        'kd_k': s(K), 'kd_d': s(D),
-        'bb_upper': s(bb_upper), 'bb_mid': s(bb_mid), 'bb_lower': s(bb_lower),
+        'volume': [int(v) for v in volume_data.values],
+        'ma5':  [round(v) if not pd.isna(v) else None for v in ma5.values],
+        'ma20': [round(v) if not pd.isna(v) else None for v in ma20.values],
     })
 
 
-# ══════════════════════════════════════════════
+# ──────────────────────────────────────────────
 # 匯出 PDF
-# ══════════════════════════════════════════════
+# ──────────────────────────────────────────────
 @app.route('/api/export/pdf', methods=['POST'])
 def export_pdf():
+    from flask import send_file
     from reportlab.platypus import (SimpleDocTemplate, Table, TableStyle,
                                      Paragraph, Spacer, HRFlowable)
-    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import mm
     from reportlab.lib import colors
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
+    import io
 
-    body       = request.get_json(force=True)
-    stocks     = body.get('stocks', [])
+    body = request.get_json(force=True)
+    stocks  = body.get('stocks', [])
     ts         = body.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
     scanned    = body.get('scanned', 0)
     mode_label = body.get('mode_label', '')
 
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=landscape(A4),
-                             leftMargin=12*mm, rightMargin=12*mm,
-                             topMargin=14*mm, bottomMargin=14*mm)
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=15*mm, rightMargin=15*mm,
+        topMargin=18*mm, bottomMargin=18*mm,
+    )
 
+    # ── 嘗試載入中文字體（系統有就用，沒有就退回英文）──
     CN_FONT = 'Helvetica'
     try:
         import glob
-        cands = (glob.glob('/usr/share/fonts/truetype/noto/*CJK*Regular*.ttf') +
-                 glob.glob('/usr/share/fonts/truetype/wqy/*.ttf'))
-        if cands:
-            pdfmetrics.registerFont(TTFont('CJK', cands[0]))
+        candidates = (
+            glob.glob('/usr/share/fonts/truetype/noto/*CJK*Regular*.ttf') +
+            glob.glob('/usr/share/fonts/truetype/wqy/*.ttf') +
+            glob.glob('/usr/share/fonts/**/*TC*Regular*.ttf', recursive=True) +
+            glob.glob('/usr/share/fonts/**/*SC*Regular*.ttf', recursive=True)
+        )
+        if candidates:
+            pdfmetrics.registerFont(TTFont('CJK', candidates[0]))
             CN_FONT = 'CJK'
     except Exception:
         pass
 
-    title_st = ParagraphStyle('T', fontName=CN_FONT, fontSize=15,
-                               textColor=colors.HexColor('#00d4aa'), spaceAfter=3)
-    sub_st   = ParagraphStyle('S', fontName=CN_FONT, fontSize=8,
-                               textColor=colors.HexColor('#94a3b8'), spaceAfter=8)
-    foot_st  = ParagraphStyle('F', fontName=CN_FONT, fontSize=7,
-                               textColor=colors.HexColor('#64748b'))
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('title', fontName=CN_FONT, fontSize=16,
+                                  textColor=colors.HexColor('#00d4aa'),
+                                  spaceAfter=4)
+    sub_style   = ParagraphStyle('sub', fontName=CN_FONT, fontSize=9,
+                                  textColor=colors.HexColor('#94a3b8'),
+                                  spaceAfter=10)
+    footer_style = ParagraphStyle('footer', fontName=CN_FONT, fontSize=8,
+                                   textColor=colors.HexColor('#64748b'))
 
-    story = [
-        Paragraph('台股均量追蹤系統 掃描報告', title_st),
-        Paragraph(f'掃描時間：{ts}　範圍：{mode_label}　已掃描：{scanned} 支　符合均量條件：{len(stocks)} 支', sub_st),
-        Paragraph('篩選條件：5日均量 > 20日均量 連續2～5日　技術指標欄位為最新數值', sub_st),
-        HRFlowable(width='100%', thickness=0.8, color=colors.HexColor('#1e2d47'), spaceAfter=8),
-    ]
+    story = []
+
+    # 標題
+    story.append(Paragraph('台股均量追蹤系統  掃描報告', title_style))
+    story.append(Paragraph(
+        f'掃描時間：{ts}　　掃描範圍：{mode_label}　　已掃描：{scanned} 支　　符合：{len(stocks)} 支',
+        sub_style))
+    story.append(Paragraph('篩選條件：5日均量 > 20日均量，連續 2～5 個交易日', sub_style))
+    story.append(HRFlowable(width='100%', thickness=1,
+                             color=colors.HexColor('#1e2d47'), spaceAfter=10))
 
     if not stocks:
-        story.append(Paragraph('本次掃描無符合條件的個股。', sub_st))
+        story.append(Paragraph('本次掃描無符合條件的個股。', sub_style))
     else:
-        def fv(n):
-            if not n: return '-'
-            if n >= 1e8: return f"{n/1e8:.1f}億"
-            if n >= 1e4: return f"{n/1e3:.0f}K"
-            return str(n)
-        def boolmark(v): return '✓' if v else ''
-
-        hdrs = ['代碼','名稱','市場','漲幅','連續','5MA量','比率',
-                'K值','D值','KD訊號','MACD','MACD訊號','柱狀','MACD訊號',
-                '布林位','布林訊號']
-        rows = [hdrs]
+        # 表頭
+        headers = ['股票代碼', '名稱', '市場', '漲幅(%)', '連續(日)',
+                   '5日均量', '20日均量', '均量比率']
+        rows = [headers]
         for s in stocks:
-            chg = f"+{s['change_pct']:.2f}" if s.get('change_pct',0)>=0 else f"{s.get('change_pct',0):.2f}"
+            def fv(n):
+                if not n: return '-'
+                if n >= 1e8: return f"{n/1e8:.1f}億"
+                if n >= 1e4: return f"{n/1e3:.0f}K"
+                return str(n)
+            chg = f"+{s['change_pct']:.2f}" if s['change_pct'] >= 0 else f"{s['change_pct']:.2f}"
             rows.append([
-                s.get('code',''), s.get('name',''), s.get('market',''),
-                chg+'%', str(s.get('consecutive_days','')),
-                fv(s.get('ma5_volume')), f"{s.get('ratio',0):.2f}x",
-                f"{s.get('k',0):.1f}", f"{s.get('d',0):.1f}",
-                s.get('kd_signal','-'),
-                f"{s.get('macd',0):.3f}", f"{s.get('macd_signal',0):.3f}",
-                f"{s.get('macd_hist',0):.3f}", s.get('macd_signal_str','-'),
-                f"{s.get('bb_pos',0):.0%}", s.get('bb_signal','-'),
+                s.get('code',''),
+                s.get('name',''),
+                s.get('market',''),
+                chg,
+                str(s.get('consecutive_days','')),
+                fv(s.get('ma5_volume')),
+                fv(s.get('ma20_volume')),
+                f"{s.get('ratio',0):.3f}x",
             ])
 
-        cw = [14,26,11,14,12,16,14, 12,12,18, 16,16,16,18, 14,18]
-        cw = [x*mm for x in cw]
+        col_widths = [22*mm, 38*mm, 16*mm, 20*mm, 20*mm, 26*mm, 26*mm, 22*mm]
 
-        t = Table(rows, colWidths=cw, repeatRows=1)
+        t = Table(rows, colWidths=col_widths, repeatRows=1)
+
+        # 連續天數顏色對應
+        day_colors = {2: '#334155', 3: '#422006', 4: '#172554', 5: '#022c22'}
+
         cmd = [
-            ('FONTNAME',  (0,0),(-1,-1), CN_FONT),
-            ('FONTSIZE',  (0,0),(-1,-1), 7),
-            ('ALIGN',     (0,0),(-1,-1), 'CENTER'),
-            ('VALIGN',    (0,0),(-1,-1), 'MIDDLE'),
-            ('BACKGROUND',(0,0),(-1,0),  colors.HexColor('#0f3460')),
-            ('TEXTCOLOR', (0,0),(-1,0),  colors.HexColor('#00d4aa')),
-            ('FONTSIZE',  (0,0),(-1,0),  7.5),
-            ('BOTTOMPADDING',(0,0),(-1,0), 5),
-            ('TOPPADDING',   (0,0),(-1,0), 5),
-            ('ROWBACKGROUNDS',(0,1),(-1,-1),
+            # 全體
+            ('FONTNAME',  (0,0), (-1,-1), CN_FONT),
+            ('FONTSIZE',  (0,0), (-1,-1), 8),
+            ('ALIGN',     (0,0), (-1,-1), 'CENTER'),
+            ('VALIGN',    (0,0), (-1,-1), 'MIDDLE'),
+            ('ROWBACKGROUNDS', (0,1), (-1,-1),
              [colors.HexColor('#111827'), colors.HexColor('#0f172a')]),
-            ('TEXTCOLOR', (0,1),(-1,-1), colors.HexColor('#cbd5e1')),
-            ('GRID',      (0,0),(-1,-1), 0.25, colors.HexColor('#1e2d47')),
-            ('BOTTOMPADDING',(0,1),(-1,-1), 4),
-            ('TOPPADDING',   (0,1),(-1,-1), 4),
-            ('TEXTCOLOR', (3,1),(3,-1), colors.HexColor('#00d98b')),
-            ('TEXTCOLOR', (6,1),(6,-1), colors.HexColor('#0084ff')),
+            ('TEXTCOLOR',  (0,1), (-1,-1), colors.HexColor('#cbd5e1')),
+            # 表頭
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#0f3460')),
+            ('TEXTCOLOR',  (0,0), (-1,0), colors.HexColor('#00d4aa')),
+            ('FONTSIZE',   (0,0), (-1,0), 8.5),
+            ('BOTTOMPADDING', (0,0), (-1,0), 7),
+            ('TOPPADDING',    (0,0), (-1,0), 7),
+            # 格線
+            ('GRID',      (0,0), (-1,-1), 0.3, colors.HexColor('#1e2d47')),
+            ('BOTTOMPADDING', (0,1), (-1,-1), 5),
+            ('TOPPADDING',    (0,1), (-1,-1), 5),
+            # 漲幅欄位顏色
+            ('TEXTCOLOR', (3,1), (3,-1), colors.HexColor('#00d98b')),
+            # 均量比率顏色
+            ('TEXTCOLOR', (7,1), (7,-1), colors.HexColor('#0084ff')),
         ]
+        # 按連續天數為整列上色
+        for row_i, s in enumerate(stocks, start=1):
+            d = s.get('consecutive_days', 3)
+            bg = day_colors.get(d, '#0f172a')
+            cmd.append(('BACKGROUND', (4, row_i), (4, row_i),
+                         colors.HexColor('#00d4aa' if d == 5 else
+                                         '#0084ff' if d == 4 else
+                                         '#ffb547' if d == 3 else '#334155')))
+            cmd.append(('TEXTCOLOR', (4, row_i), (4, row_i), colors.black))
+
         t.setStyle(TableStyle(cmd))
         story.append(t)
 
-    story += [Spacer(1,6*mm),
-              HRFlowable(width='100%',thickness=0.4,color=colors.HexColor('#1e2d47'),spaceAfter=3),
-              Paragraph('資料來源：TWSE / TPEX　　本報告僅供參考，不構成投資建議', foot_st)]
+    story.append(Spacer(1, 8*mm))
+    story.append(HRFlowable(width='100%', thickness=0.5,
+                             color=colors.HexColor('#1e2d47'), spaceAfter=4))
+    story.append(Paragraph(
+        '資料來源：台灣證券交易所 (TWSE) / 櫃買中心 (TPEX)　　本報告僅供參考，不構成投資建議',
+        footer_style))
 
     doc.build(story)
     buf.seek(0)
+
     fname = f"stock_report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
-    return send_file(buf, mimetype='application/pdf', as_attachment=True, download_name=fname)
+    return send_file(buf, mimetype='application/pdf',
+                     as_attachment=True, download_name=fname)
 
 
-# ══════════════════════════════════════════════
+# ──────────────────────────────────────────────
 # 匯出 DOCX
-# ══════════════════════════════════════════════
+# ──────────────────────────────────────────────
 @app.route('/api/export/docx', methods=['POST'])
 def export_docx():
+    from flask import send_file
     from docx import Document
-    from docx.shared import Pt, RGBColor, Cm
+    from docx.shared import Pt, RGBColor, Cm, Inches
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
     from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
+    import io
 
-    body       = request.get_json(force=True)
-    stocks     = body.get('stocks', [])
+    body = request.get_json(force=True)
+    stocks  = body.get('stocks', [])
     ts         = body.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
     scanned    = body.get('scanned', 0)
     mode_label = body.get('mode_label', '')
 
     doc = Document()
-    sec = doc.sections[0]
-    sec.page_width = Cm(42); sec.page_height = Cm(29.7)
-    sec.left_margin = sec.right_margin = Cm(1.2)
-    sec.top_margin  = sec.bottom_margin = Cm(1.5)
 
-    def set_bg(cell, hex_color):
-        tc = cell._tc; pr = tc.get_or_add_tcPr()
-        shd = OxmlElement('w:shd')
-        shd.set(qn('w:fill'), hex_color); shd.set(qn('w:val'), 'clear')
-        pr.append(shd)
+    # ── 頁面設定 ──
+    section = doc.sections[0]
+    section.page_width  = Cm(29.7)
+    section.page_height = Cm(21.0)
+    section.left_margin = section.right_margin = Cm(1.5)
+    section.top_margin  = section.bottom_margin = Cm(1.8)
 
-    def set_border(cell, color='1E2D47'):
-        tc = cell._tc; pr = tc.get_or_add_tcPr()
-        borders = OxmlElement('w:tcBorders')
-        for s in ['top','left','bottom','right']:
-            el = OxmlElement(f'w:{s}')
-            el.set(qn('w:val'),'single'); el.set(qn('w:sz'),'4'); el.set(qn('w:color'), color)
-            borders.append(el)
-        pr.append(borders)
+    def set_cell_bg(cell, hex_color):
+        tc   = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+        shd  = OxmlElement('w:shd')
+        shd.set(qn('w:fill'), hex_color)
+        shd.set(qn('w:val'), 'clear')
+        tcPr.append(shd)
 
+    def set_cell_border(cell, color='1E2D47'):
+        tc   = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+        tcBorders = OxmlElement('w:tcBorders')
+        for side in ['top','left','bottom','right']:
+            el = OxmlElement(f'w:{side}')
+            el.set(qn('w:val'), 'single')
+            el.set(qn('w:sz'), '4')
+            el.set(qn('w:color'), color)
+            tcBorders.append(el)
+        tcPr.append(tcBorders)
+
+    # ── 標題 ──
     h = doc.add_heading('台股均量追蹤系統 — 掃描報告', 0)
     h.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    r = h.runs[0]; r.font.color.rgb = RGBColor(0,0xD4,0xAA); r.font.size = Pt(16)
+    run = h.runs[0]
+    run.font.color.rgb = RGBColor(0x00, 0xD4, 0xAA)
+    run.font.size = Pt(18)
 
+    # 副標題
     p = doc.add_paragraph()
-    for txt in [f'掃描時間：{ts}', f'　範圍：{mode_label}', f'　已掃描：{scanned} 支', f'　符合均量條件：{len(stocks)} 支']:
-        run = p.add_run(txt); run.font.size = Pt(9); run.font.color.rgb = RGBColor(0x94,0xA3,0xB8)
-    p2 = doc.add_paragraph()
-    r2 = p2.add_run('篩選條件：5日均量 > 20日均量 連續2～5日　技術指標為最新值')
-    r2.font.size = Pt(8.5); r2.font.color.rgb = RGBColor(0x64,0x74,0x8B)
+    p.add_run(f'掃描時間：{ts}').font.size = Pt(9)
+    p.add_run(f'　　掃描範圍：{mode_label}　　已掃描：{scanned} 支　　符合：{len(stocks)} 支').font.size = Pt(9)
+    p.add_run('\n篩選條件：5日均量 > 20日均量，連續 2～5 個交易日').font.size = Pt(9)
+    for run in p.runs:
+        run.font.color.rgb = RGBColor(0x94, 0xA3, 0xB8)
+
     doc.add_paragraph()
 
     if not stocks:
         doc.add_paragraph('本次掃描無符合條件的個股。')
     else:
+        # ── 表格 ──
+        headers = ['代碼', '名稱', '市場', '漲幅(%)', '連續(日)',
+                   '5日均量', '20日均量', '均量比率']
+        col_widths_cm = [2.0, 3.8, 1.6, 2.0, 2.0, 2.8, 2.8, 2.4]
+
+        table = doc.add_table(rows=1, cols=len(headers))
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        table.style = 'Table Grid'
+
+        # 設定欄寬
+        for i, w in enumerate(col_widths_cm):
+            for cell in table.columns[i].cells:
+                cell.width = Cm(w)
+
+        # 表頭
+        hdr_row = table.rows[0]
+        for i, (cell, txt) in enumerate(zip(hdr_row.cells, headers)):
+            set_cell_bg(cell, '0F3460')
+            set_cell_border(cell)
+            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+            p = cell.paragraphs[0]
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = p.add_run(txt)
+            run.bold = True
+            run.font.size = Pt(8.5)
+            run.font.color.rgb = RGBColor(0x00, 0xD4, 0xAA)
+
+        # 資料列
+        day_colors_hex = {5:'022C22', 4:'172554', 3:'422006', 2:'1E293B'}
+
         def fv(n):
             if not n: return '-'
             if n >= 1e8: return f"{n/1e8:.1f}億"
             if n >= 1e4: return f"{n/1e3:.0f}K"
             return str(n)
 
-        hdrs  = ['代碼','名稱','市場','漲幅%','連續日','5MA量','比率',
-                 'K值','D值','KD訊號','MACD','MACD訊號','柱狀圖','MACD狀態',
-                 '布林位置','布林訊號']
-        widths = [1.6,3.0,1.2,1.6,1.4,2.2,1.6, 1.4,1.4,2.2, 2.0,2.0,2.0,2.2, 2.0,2.2]
-
-        tbl = doc.add_table(rows=1, cols=len(hdrs))
-        tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
-        tbl.style = 'Table Grid'
-        for i, w in enumerate(widths):
-            for cell in tbl.columns[i].cells:
-                cell.width = Cm(w)
-
-        hrow = tbl.rows[0]
-        for cell, txt in zip(hrow.cells, hdrs):
-            set_bg(cell, '0F3460'); set_border(cell)
-            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-            p = cell.paragraphs[0]; p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            run = p.add_run(txt); run.bold = True
-            run.font.size = Pt(8); run.font.color.rgb = RGBColor(0,0xD4,0xAA)
-
         for idx, s in enumerate(stocks):
-            row = tbl.add_row(); row.height = Cm(0.7)
-            bg = '111827' if idx % 2 == 0 else '0F172A'
-            chg = f"+{s['change_pct']:.2f}" if s.get('change_pct',0)>=0 else f"{s.get('change_pct',0):.2f}"
-            vals = [
-                s.get('code',''), s.get('name',''), s.get('market',''),
-                chg+'%', str(s.get('consecutive_days','')),
-                fv(s.get('ma5_volume')), f"{s.get('ratio',0):.2f}x",
-                f"{s.get('k',0):.1f}", f"{s.get('d',0):.1f}",
-                s.get('kd_signal','-'),
-                f"{s.get('macd',0):.3f}", f"{s.get('macd_signal',0):.3f}",
-                f"{s.get('macd_hist',0):.3f}", s.get('macd_signal_str','-'),
-                f"{s.get('bb_pos',0):.0%}", s.get('bb_signal','-'),
+            row = table.add_row()
+            row.height = Cm(0.75)
+            d = s.get('consecutive_days', 2)
+            row_bg = day_colors_hex.get(d, '0F172A')
+            alt_bg = '111827' if idx % 2 == 0 else '0F172A'
+
+            chg = f"+{s['change_pct']:.2f}" if s['change_pct'] >= 0 else f"{s['change_pct']:.2f}"
+            values = [
+                s.get('code',''),
+                s.get('name',''),
+                s.get('market',''),
+                chg,
+                str(d),
+                fv(s.get('ma5_volume')),
+                fv(s.get('ma20_volume')),
+                f"{s.get('ratio',0):.3f}x",
             ]
-            vcols = [
-                RGBColor(0xFF,0xFF,0xFF), RGBColor(0xCB,0xD5,0xE1), RGBColor(0xFF,0xB5,0x47),
-                (RGBColor(0,0xD9,0x8B) if s.get('change_pct',0)>=0 else RGBColor(0xFF,0x4D,0x6D)),
-                RGBColor(0,0xD4,0xAA), RGBColor(0,0xD4,0xAA), RGBColor(0,0x84,0xFF),
-                RGBColor(0xFF,0xD7,0x00), RGBColor(0xFF,0xD7,0x00), RGBColor(0xCB,0xD5,0xE1),
-                RGBColor(0,0x84,0xFF),   RGBColor(0x94,0xA3,0xB8), RGBColor(0x94,0xA3,0xB8), RGBColor(0xCB,0xD5,0xE1),
-                RGBColor(0x7C,0x3A,0xED), RGBColor(0xCB,0xD5,0xE1),
+            # 特殊顏色設定
+            val_colors = [
+                RGBColor(0xFF,0xFF,0xFF),   # 代碼 - 白
+                RGBColor(0xCB,0xD5,0xE1),   # 名稱 - 淡灰
+                RGBColor(0xFF,0xB5,0x47),   # 市場 - 橙
+                (RGBColor(0x00,0xD9,0x8B) if s['change_pct'] >= 0
+                 else RGBColor(0xFF,0x4D,0x6D)),  # 漲幅
+                RGBColor(0x00,0xD4,0xAA),   # 連續天數 - 綠
+                RGBColor(0x00,0xD4,0xAA),   # 5日均量 - 綠
+                RGBColor(0x94,0xA3,0xB8),   # 20日均量 - 灰
+                RGBColor(0x00,0x84,0xFF),   # 比率 - 藍
             ]
-            for cell, val, vc in zip(row.cells, vals, vcols):
-                set_bg(cell, bg); set_border(cell)
+
+            for i, (cell, val, vc) in enumerate(zip(row.cells, values, val_colors)):
+                set_cell_bg(cell, alt_bg)
+                set_cell_border(cell)
                 cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-                p = cell.paragraphs[0]; p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                run = p.add_run(val); run.font.size = Pt(7.5); run.font.color.rgb = vc
+                p = cell.paragraphs[0]
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                run = p.add_run(val)
+                run.font.size = Pt(8)
+                run.font.color.rgb = vc
+                if i == 0:
+                    run.bold = True
 
+    # 頁尾
     doc.add_paragraph()
-    fp = doc.add_paragraph('資料來源：TWSE / TPEX　　本報告僅供參考，不構成投資建議')
-    fp.runs[0].font.size = Pt(7.5); fp.runs[0].font.color.rgb = RGBColor(0x64,0x74,0x8B)
+    footer_p = doc.add_paragraph(
+        '資料來源：台灣證券交易所 (TWSE) / 櫃買中心 (TPEX)　　本報告僅供參考，不構成投資建議')
+    for run in footer_p.runs:
+        run.font.size = Pt(8)
+        run.font.color.rgb = RGBColor(0x64, 0x74, 0x8B)
 
-    buf = io.BytesIO(); doc.save(buf); buf.seek(0)
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+
     fname = f"stock_report_{datetime.now().strftime('%Y%m%d_%H%M')}.docx"
     return send_file(buf,
-        mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        as_attachment=True, download_name=fname)
+                     mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                     as_attachment=True, download_name=fname)
 
 
 if __name__ == '__main__':
     os.makedirs('static', exist_ok=True)
-    print("=" * 55)
-    print("🚀 台股均量追蹤系統 v4 啟動（技術分析版）")
+    print("=" * 50)
+    print("🚀 台股均量追蹤系統 v3 啟動（雲端部署版）")
     print("📡 資料來源：TWSE + TPEX 公開 API")
-    print("📊 技術指標：KD / MACD / 布林通道")
     print("🌐 請開啟瀏覽器前往：http://localhost:5001")
-    print("=" * 55)
+    print("=" * 50)
     app.run(host='0.0.0.0', port=5001, debug=False, threaded=True)
