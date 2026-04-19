@@ -385,15 +385,28 @@ def calc_bband(close, n=20, k=2):
     )
 
 
+def _to_python(v):
+    """把 numpy 純量轉成 Python 原生型別，確保 JSON 可序列化"""
+    if isinstance(v, (np.integer,)):
+        return int(v)
+    if isinstance(v, (np.floating,)):
+        return float(v)
+    if isinstance(v, (np.bool_,)):
+        return bool(v)
+    if isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
+        return None
+    return v
+
+
 def calc_all_ta(hist):
-    """計算所有技術指標，回傳 dict（排除 series 欄位）"""
+    """計算所有技術指標，回傳 JSON 可序列化的 dict"""
     try:
         if hist is None or len(hist) < 30:
             return {}
         kd   = calc_kd(hist['High'], hist['Low'], hist['Close'])
         macd = calc_macd(hist['Close'])
         bb   = calc_bband(hist['Close'])
-        # 只保留純量值（去掉 series）
+        # 排除 Series 欄位（供圖表用，由 /api/stock 單獨提供）
         skip = {'kd_k_series', 'kd_d_series',
                 'macd_line', 'macd_signal_line', 'macd_histogram',
                 'bb_upper_series', 'bb_mid_series', 'bb_lower_series'}
@@ -401,7 +414,7 @@ def calc_all_ta(hist):
         for d in (kd, macd, bb):
             for k, v in d.items():
                 if k not in skip:
-                    out[k] = v
+                    out[k] = _to_python(v)   # ← 確保 Python 原生型別
         return out
     except Exception as e:
         print(f'  [TA] 計算失敗：{e}')
@@ -434,10 +447,10 @@ def analyze_volume_condition(vol_series, min_days=2, max_days=5):
     ma5_v  = int(round(df['ma5'].iloc[-1]))
     ma20_v = int(round(df['ma20'].iloc[-1]))
     return {
-        'consecutive_days': consecutive,
-        'ma5_volume':  ma5_v,
-        'ma20_volume': ma20_v,
-        'ratio': round(ma5_v / ma20_v, 3) if ma20_v else 0,
+        'consecutive_days': int(consecutive),
+        'ma5_volume':  int(ma5_v),
+        'ma20_volume': int(ma20_v),
+        'ratio': float(round(ma5_v / ma20_v, 3)) if ma20_v else 0.0,
     }
 
 
