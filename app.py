@@ -12,7 +12,37 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 
+from flask.json.provider import DefaultJSONProvider
+
+class _SafeJSONProvider(DefaultJSONProvider):
+    """把 NaN / Infinity 轉成 null，避免瀏覽器 JSON.parse 失敗"""
+    @staticmethod
+    def default(o):
+        import numpy as np
+        if isinstance(o, np.integer):  return int(o)
+        if isinstance(o, np.floating): return None if (np.isnan(o) or np.isinf(o)) else float(o)
+        if isinstance(o, np.bool_):    return bool(o)
+        if isinstance(o, np.ndarray):  return o.tolist()
+        return DefaultJSONProvider.default(o)
+
+    def dumps(self, obj, **kw):
+        import math
+        # 先用 default encoder，再把殘留的 NaN/Infinity 替換成 null
+        kw.setdefault('allow_nan', False)
+        try:
+            return super().dumps(obj, **kw)
+        except (ValueError, TypeError):
+            # allow_nan=False 會丟 ValueError → 改用 allow_nan=True 再手動替換
+            raw = super().dumps(obj, allow_nan=True)
+            import re
+            raw = re.sub(r'\bNaN\b',       'null', raw)
+            raw = re.sub(r'\bInfinity\b',  'null', raw)
+            raw = re.sub(r'\b-Infinity\b', 'null', raw)
+            return raw
+
 app = Flask(__name__, static_folder='static')
+app.json_provider_class = _SafeJSONProvider
+app.json = _SafeJSONProvider(app)
 
 BASE_HEADERS = {
     'User-Agent': (
@@ -74,7 +104,7 @@ _FALLBACK_TWSE = [
     '4153','4743','4174','4175','6472','4142','4176','6279','4106','2603',
     '2609','2615','2618','2637','2601','5701','2606','2605','2604','2610',
     '2611','2616','5608','2630','2634','2636','2912','2903','2915','2905',
-    '2906','9945','2910','2908','2504','2511','6271','6669','8詣45','5234',
+    '2906','9945','2910','2908','2504','2511','6271','6669','8454','5234',
     '2441','2443','2444','2449','6005','6147','6148','6150','6152','6153',
     '6154','6155','6158','6160','6161','6162','6163','6164','6165','6166',
     '6167','6168','6169','6170','6171','6172','6173','6174','6175','6176',
@@ -386,14 +416,16 @@ def calc_bband(close, n=20, k=2):
 
 
 def _to_python(v):
-    """把 numpy 純量轉成 Python 原生型別，確保 JSON 可序列化"""
+    """把 numpy 純量 / NaN / Inf 轉成 Python JSON 安全型別"""
+    import math
     if isinstance(v, (np.integer,)):
         return int(v)
     if isinstance(v, (np.floating,)):
-        return float(v)
+        f = float(v)
+        return None if (math.isnan(f) or math.isinf(f)) else f
     if isinstance(v, (np.bool_,)):
         return bool(v)
-    if isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
+    if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
         return None
     return v
 
