@@ -3,486 +3,538 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>台股均量追蹤系統</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
+<title>台股均量＋技術分析篩選系統</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --bg: #0a0e1a;
-    --surface: #111827;
-    --surface2: #1a2236;
-    --border: #1e2d47;
-    --accent: #00d4aa;
-    --accent2: #0084ff;
-    --bull: #00d98b;
-    --bear: #ff4d6d;
-    --warn: #ffb547;
-    --text: #e2e8f0;
-    --muted: #64748b;
-  }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: 'Noto Sans TC', sans-serif;
-    min-height: 100vh;
-  }
-  body::before {
-    content: '';
-    position: fixed; inset: 0;
-    background-image:
-      linear-gradient(rgba(0,212,170,0.03) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(0,212,170,0.03) 1px, transparent 1px);
-    background-size: 40px 40px;
-    pointer-events: none; z-index: 0;
-  }
-  .container { max-width: 1200px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+:root {
+  --bg:#0a0e1a; --surface:#111827; --surface2:#1a2236; --border:#1e2d47;
+  --accent:#00d4aa; --accent2:#0084ff; --bull:#00d98b; --bear:#ff4d6d;
+  --warn:#ffb547; --purple:#7c3aed; --text:#e2e8f0; --muted:#64748b;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:var(--bg);color:var(--text);font-family:'Noto Sans TC',sans-serif;min-height:100vh;}
+body::before{content:'';position:fixed;inset:0;
+  background-image:linear-gradient(rgba(0,212,170,.03)1px,transparent 1px),linear-gradient(90deg,rgba(0,212,170,.03)1px,transparent 1px);
+  background-size:40px 40px;pointer-events:none;z-index:0;}
+.container{max-width:1400px;margin:0 auto;padding:0 20px;position:relative;z-index:1;}
 
-  header { padding: 32px 0 20px; border-bottom: 1px solid var(--border); }
-  .header-inner { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
-  .brand { display: flex; align-items: center; gap: 14px; }
-  .logo-icon {
-    width: 48px; height: 48px;
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-    border-radius: 12px; display: flex; align-items: center; justify-content: center;
-    font-size: 22px; box-shadow: 0 0 20px rgba(0,212,170,0.3); flex-shrink: 0;
-  }
-  .brand-text h1 {
-    font-size: 22px; font-weight: 700; letter-spacing: -0.5px;
-    background: linear-gradient(90deg, var(--accent), #7fffff);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
-  }
-  .brand-text p { font-size: 12px; color: var(--muted); font-family: 'JetBrains Mono', monospace; margin-top: 2px; }
+/* ─── Header ─── */
+header{padding:28px 0 16px;border-bottom:1px solid var(--border);}
+.header-inner{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;}
+.brand{display:flex;align-items:center;gap:12px;}
+.logo-icon{width:46px;height:46px;background:linear-gradient(135deg,var(--accent),var(--accent2));
+  border-radius:12px;display:flex;align-items:center;justify-content:center;
+  font-size:20px;box-shadow:0 0 20px rgba(0,212,170,.3);flex-shrink:0;}
+.brand-text h1{font-size:20px;font-weight:700;letter-spacing:-.5px;
+  background:linear-gradient(90deg,var(--accent),#7fffff);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
+.brand-text p{font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-top:2px;}
+.scan-btn{display:flex;align-items:center;gap:9px;
+  background:linear-gradient(135deg,var(--accent),#00a88a);color:#001a14;
+  border:none;padding:11px 26px;border-radius:10px;font-size:14px;font-weight:700;
+  font-family:'Noto Sans TC',sans-serif;cursor:pointer;transition:all .2s;
+  box-shadow:0 4px 16px rgba(0,212,170,.3);white-space:nowrap;}
+.scan-btn:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,212,170,.4);}
+.scan-btn:disabled{opacity:.5;cursor:not-allowed;transform:none;}
+.spin{animation:spin 1s linear infinite;display:inline-block;}
+@keyframes spin{to{transform:rotate(360deg)}}
 
-  .scan-btn {
-    display: flex; align-items: center; gap: 10px;
-    background: linear-gradient(135deg, var(--accent), #00a88a);
-    color: #001a14; border: none; padding: 12px 28px; border-radius: 10px;
-    font-size: 15px; font-weight: 700; font-family: 'Noto Sans TC', sans-serif;
-    cursor: pointer; transition: all 0.2s; box-shadow: 0 4px 16px rgba(0,212,170,0.3); white-space: nowrap;
-  }
-  .scan-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,212,170,0.4); }
-  .scan-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-  .spin { animation: spin 1s linear infinite; display: inline-block; }
-  @keyframes spin { to { transform: rotate(360deg); } }
+/* ─── Tags ─── */
+.strategy-bar{display:flex;gap:10px;padding:14px 0 6px;flex-wrap:wrap;align-items:center;}
+.tag{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:20px;
+  font-size:11px;font-weight:500;font-family:'JetBrains Mono',monospace;border:1px solid;}
+.tag-g{background:rgba(0,217,139,.1);border-color:rgba(0,217,139,.3);color:var(--bull);}
+.tag-b{background:rgba(0,132,255,.1);border-color:rgba(0,132,255,.3);color:var(--accent2);}
+.tag-w{background:rgba(255,181,71,.1);border-color:rgba(255,181,71,.3);color:var(--warn);}
 
-  .strategy-bar { display: flex; gap: 12px; padding: 16px 0 4px; flex-wrap: wrap; align-items: center; }
-  .strategy-tag {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 500;
-    font-family: 'JetBrains Mono', monospace; border: 1px solid;
-  }
-  .tag-green { background: rgba(0,217,139,0.1); border-color: rgba(0,217,139,0.3); color: var(--bull); }
-  .tag-blue  { background: rgba(0,132,255,0.1); border-color: rgba(0,132,255,0.3); color: var(--accent2); }
-  .tag-warn  { background: rgba(255,181,71,0.1); border-color: rgba(255,181,71,0.3); color: var(--warn); }
+/* ─── Mode Selector ─── */
+.mode-selector{display:flex;gap:8px;padding:14px 0 6px;flex-wrap:wrap;align-items:center;}
+.mode-label{font-size:12px;color:var(--muted);margin-right:4px;white-space:nowrap;}
+.mode-btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:9px;
+  font-size:12px;font-weight:500;font-family:'Noto Sans TC',sans-serif;cursor:pointer;
+  border:1px solid var(--border);background:var(--surface);color:var(--muted);transition:all .2s;}
+.mode-btn:hover{border-color:var(--accent);color:var(--text);}
+.mode-btn.active{background:rgba(0,212,170,.12);border-color:var(--accent);color:var(--accent);}
+.mode-cnt{font-size:10px;font-family:'JetBrains Mono',monospace;
+  background:rgba(0,212,170,.15);color:var(--accent);padding:1px 6px;border-radius:5px;}
 
-  /* Progress Card */
-  #progressCard {
-    display: none;
-    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
-    padding: 24px 28px; margin-top: 20px;
-  }
-  .prog-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-  .prog-dot {
-    width: 10px; height: 10px; border-radius: 50%; background: var(--accent);
-    animation: pulse 1.2s ease-in-out infinite; flex-shrink: 0;
-  }
-  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.4;transform:scale(0.7)} }
-  .prog-label { font-size: 14px; font-weight: 500; flex: 1; }
-  .prog-count { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--muted); }
-  .prog-track { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; margin-bottom: 10px; }
-  .prog-fill { height: 100%; background: linear-gradient(90deg, var(--accent2), var(--accent)); border-radius: 4px; transition: width 0.5s ease; width: 0%; }
-  .prog-detail { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; }
-  .prog-found { color: var(--bull); font-family: 'JetBrains Mono', monospace; }
+/* ─── TA Filter Panel ─── */
+.ta-panel{background:var(--surface);border:1px solid var(--border);border-radius:14px;
+  padding:18px 22px;margin-top:14px;}
+.ta-panel-header{display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:14px;flex-wrap:wrap;gap:8px;}
+.ta-panel-title{font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px;}
+.ta-panel-hint{font-size:11px;color:var(--muted);}
+.ta-groups{display:flex;gap:20px;flex-wrap:wrap;}
+.ta-group{flex:1;min-width:200px;}
+.ta-group-label{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.8px;margin-bottom:10px;}
+.ta-checks{display:flex;flex-direction:column;gap:7px;}
+.ta-check-item{display:flex;align-items:center;gap:9px;cursor:pointer;user-select:none;}
+.ta-check-item input[type=checkbox]{display:none;}
+.ta-checkmark{width:18px;height:18px;border-radius:5px;border:1.5px solid var(--border);
+  background:var(--surface2);display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;transition:all .15s;font-size:11px;}
+.ta-check-item input:checked + .ta-checkmark{border-color:var(--accent);
+  background:rgba(0,212,170,.2);color:var(--accent);}
+.ta-check-text{font-size:12px;}
+.ta-check-badge{font-size:10px;padding:1px 7px;border-radius:10px;font-weight:600;
+  font-family:'JetBrains Mono',monospace;}
+.badge-kd{background:rgba(255,215,0,.15);color:#ffd700;}
+.badge-macd{background:rgba(0,132,255,.15);color:var(--accent2);}
+.badge-bb{background:rgba(124,58,237,.15);color:var(--purple);}
 
-  /* Stats */
-  #statsRow { display: none; gap: 16px; margin-top: 20px; flex-wrap: wrap; }
-  .stat-card {
-    flex: 1; min-width: 150px; background: var(--surface); border: 1px solid var(--border);
-    border-radius: 12px; padding: 18px 20px; position: relative; overflow: hidden;
-  }
-  .stat-card::before { content: ''; position: absolute; top:0;left:0;right:0;height:2px; }
-  .stat-card.green::before { background: var(--bull); }
-  .stat-card.blue::before  { background: var(--accent2); }
-  .stat-card.warn::before  { background: var(--warn); }
-  .stat-card.accent::before { background: var(--accent); }
-  .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
-  .stat-value { font-size: 28px; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
-  .stat-card.green .stat-value  { color: var(--bull); }
-  .stat-card.blue .stat-value   { color: var(--accent2); }
-  .stat-card.warn .stat-value   { color: var(--warn); }
-  .stat-card.accent .stat-value { color: var(--accent); }
+/* ─── Error ─── */
+.err-banner{background:rgba(255,77,109,.1);border:1px solid rgba(255,77,109,.3);
+  border-radius:10px;padding:14px 18px;color:var(--bear);
+  display:flex;align-items:center;gap:10px;margin-top:14px;}
 
-  /* Table */
-  #tableWrap {
-    display: none; background: var(--surface); border: 1px solid var(--border);
-    border-radius: 14px; overflow: hidden; margin-top: 20px; margin-bottom: 40px;
-  }
-  .table-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 18px 24px; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px;
-  }
-  .table-title { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
-  .badge { display:inline-block; padding:3px 10px; border-radius:12px; font-size:11px; font-weight:600; background:rgba(0,212,170,0.15); color:var(--accent); }
-  .filter-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
-  .tab {
-    padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 500;
-    cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--muted);
-    font-family: 'Noto Sans TC', sans-serif; transition: all 0.15s;
-  }
-  .tab.active, .tab:hover { background: rgba(0,212,170,0.1); border-color: var(--accent); color: var(--accent); }
-  table { width: 100%; border-collapse: collapse; }
-  thead th {
-    padding: 12px 16px; text-align: left; font-size: 11px; font-weight: 600;
-    color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px;
-    background: var(--surface2); border-bottom: 1px solid var(--border);
-    cursor: pointer; user-select: none; white-space: nowrap;
-  }
-  thead th:hover { color: var(--accent); }
-  tbody tr { border-bottom: 1px solid rgba(30,45,71,0.6); transition: background 0.15s; cursor: pointer; }
-  tbody tr:last-child { border-bottom: none; }
-  tbody tr:hover { background: var(--surface2); }
-  td { padding: 14px 16px; font-size: 13px; }
-  .stock-code { font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 15px; color: #fff; }
-  .stock-name { font-size: 12px; color: var(--muted); margin-top: 2px; }
-  .num { font-family: 'JetBrains Mono', monospace; text-align: right; }
-  .change-pos { color: var(--bull); }
-  .change-neg { color: var(--bear); }
-  .mkt-badge {
-    display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 10px;
-    font-weight: 600; margin-top: 3px;
-  }
-  .mkt-tw  { background: rgba(0,132,255,0.15); color: var(--accent2); }
-  .mkt-two { background: rgba(255,181,71,0.15); color: var(--warn); }
-  .days-badge {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 32px; height: 32px; border-radius: 8px;
-    font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 15px;
-  }
-  .days-2 { background: rgba(100,116,139,0.15); color: var(--muted); }
-  .days-3 { background: rgba(255,181,71,0.15); color: var(--warn); }
-  .days-4 { background: rgba(0,132,255,0.15); color: var(--accent2); }
-  .days-5 { background: rgba(0,212,170,0.15); color: var(--accent); box-shadow: 0 0 12px rgba(0,212,170,0.2); }
-  .ratio-bar { display: flex; align-items: center; gap: 8px; }
-  .ratio-track { width: 80px; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
-  .ratio-fill { height: 100%; background: linear-gradient(90deg, var(--accent2), var(--accent)); border-radius: 2px; }
-  .vol-num { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--muted); }
-  .timestamp { font-size: 12px; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+/* ─── Progress ─── */
+#progressCard{display:none;background:var(--surface);border:1px solid var(--border);
+  border-radius:14px;padding:22px 26px;margin-top:14px;}
+.prog-header{display:flex;align-items:center;gap:10px;margin-bottom:14px;}
+.prog-dot{width:9px;height:9px;border-radius:50%;background:var(--accent);
+  animation:pulse 1.2s ease-in-out infinite;flex-shrink:0;}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.7)}}
+.prog-label{font-size:13px;font-weight:500;flex:1;}
+.prog-count{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--muted);}
+.prog-track{height:7px;background:var(--border);border-radius:4px;overflow:hidden;margin-bottom:9px;}
+.prog-fill{height:100%;background:linear-gradient(90deg,var(--accent2),var(--accent));
+  border-radius:4px;transition:width .4s ease;width:0%;}
+.prog-detail{font-size:12px;color:var(--muted);display:flex;justify-content:space-between;}
+.prog-found{color:var(--bull);font-family:'JetBrains Mono',monospace;}
 
-  /* Intro */
-  #intro {
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    padding: 80px 40px; text-align: center; gap: 20px;
-  }
-  .intro-icon { font-size: 56px; }
-  .intro-title { font-size: 26px; font-weight: 700; }
-  .intro-desc { color: var(--muted); font-size: 15px; max-width: 520px; line-height: 1.8; }
-  .how-it-works { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; margin-top: 10px; }
-  .how-card {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
-    padding: 20px; max-width: 200px; text-align: center;
-  }
-  .how-card .step { font-size: 28px; margin-bottom: 10px; }
-  .how-card h3 { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
-  .how-card p { font-size: 12px; color: var(--muted); line-height: 1.5; }
+/* ─── Stats ─── */
+#statsRow{display:none;gap:14px;margin-top:16px;flex-wrap:wrap;}
+.stat-card{flex:1;min-width:140px;background:var(--surface);border:1px solid var(--border);
+  border-radius:12px;padding:16px 18px;position:relative;overflow:hidden;}
+.stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;}
+.stat-card.green::before{background:var(--bull);}
+.stat-card.blue::before{background:var(--accent2);}
+.stat-card.warn::before{background:var(--warn);}
+.stat-card.accent::before{background:var(--accent);}
+.stat-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;}
+.stat-value{font-size:26px;font-weight:700;font-family:'JetBrains Mono',monospace;}
+.stat-card.green .stat-value{color:var(--bull);}
+.stat-card.blue .stat-value{color:var(--accent2);}
+.stat-card.warn .stat-value{color:var(--warn);}
+.stat-card.accent .stat-value{color:var(--accent);}
 
-  /* Modal */
-  #modal {
-    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100;
-    align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(4px);
-  }
-  #modal.open { display: flex; }
-  .modal-box {
-    background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
-    padding: 28px; width: 100%; max-width: 700px; max-height: 80vh; overflow-y: auto;
-  }
-  .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
-  .modal-close {
-    background: var(--surface2); border: 1px solid var(--border); color: var(--muted);
-    width: 32px; height: 32px; border-radius: 8px; cursor: pointer; font-size: 16px;
-    display: flex; align-items: center; justify-content: center; transition: all 0.15s;
-  }
-  .modal-close:hover { color: var(--text); }
-  #chartCanvas { width: 100%; height: 220px; background: var(--surface2); border-radius: 10px; border: 1px solid var(--border); margin-bottom: 16px; }
-  .detail-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
-  .detail-item { background: var(--surface2); border-radius: 10px; padding: 14px; text-align: center; }
-  .detail-item .label { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
-  .detail-item .value { font-size: 18px; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+/* ─── Export Bar ─── */
+.export-bar{display:none;gap:10px;margin-top:14px;flex-wrap:wrap;align-items:center;}
+.export-label{font-size:12px;color:var(--muted);}
+.export-btn{display:inline-flex;align-items:center;gap:7px;padding:8px 18px;border-radius:9px;
+  font-size:12px;font-weight:600;font-family:'Noto Sans TC',sans-serif;
+  cursor:pointer;border:1px solid;transition:all .2s;}
+.export-btn:disabled{opacity:.5;cursor:not-allowed;}
+.export-btn.pdf{background:rgba(255,77,109,.1);border-color:rgba(255,77,109,.4);color:var(--bear);}
+.export-btn.pdf:hover:not(:disabled){background:rgba(255,77,109,.2);transform:translateY(-1px);}
+.export-btn.docx{background:rgba(0,132,255,.1);border-color:rgba(0,132,255,.4);color:var(--accent2);}
+.export-btn.docx:hover:not(:disabled){background:rgba(0,132,255,.2);transform:translateY(-1px);}
+.export-hint{font-size:11px;color:var(--muted);margin-left:auto;}
 
-  /* Error banner */
-  .err-banner {
-    background: rgba(255,77,109,0.1); border: 1px solid rgba(255,77,109,0.3);
-    border-radius: 10px; padding: 16px 20px; color: var(--bear);
-    display: flex; align-items: center; gap: 10px; margin-top: 20px;
-  }
+/* ─── Table ─── */
+#tableWrap{display:none;background:var(--surface);border:1px solid var(--border);
+  border-radius:14px;overflow:hidden;margin-top:16px;margin-bottom:40px;}
+.table-header{display:flex;align-items:flex-start;justify-content:space-between;
+  padding:16px 22px;border-bottom:1px solid var(--border);flex-wrap:wrap;gap:10px;}
+.table-title{font-size:14px;font-weight:600;display:flex;align-items:center;gap:7px;}
+.badge{display:inline-block;padding:2px 9px;border-radius:11px;font-size:11px;
+  font-weight:600;background:rgba(0,212,170,.15);color:var(--accent);}
+.filter-tabs{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;}
+.tab{padding:5px 12px;border-radius:7px;font-size:11px;font-weight:500;cursor:pointer;
+  border:1px solid var(--border);background:transparent;color:var(--muted);
+  font-family:'Noto Sans TC',sans-serif;transition:all .15s;}
+.tab.active,.tab:hover{background:rgba(0,212,170,.1);border-color:var(--accent);color:var(--accent);}
+.timestamp{font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace;}
 
-  @media (max-width: 600px) {
-    .header-inner { flex-direction: column; align-items: flex-start; }
-    .scan-btn { width: 100%; justify-content: center; }
-    thead th:nth-child(n+5) { display: none; }
-    td:nth-child(n+5) { display: none; }
-    .detail-grid { grid-template-columns: repeat(2,1fr); }
-  }
+table{width:100%;border-collapse:collapse;}
+thead th{padding:10px 12px;text-align:left;font-size:10px;font-weight:600;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.7px;background:var(--surface2);
+  border-bottom:1px solid var(--border);cursor:pointer;user-select:none;white-space:nowrap;}
+thead th:hover{color:var(--accent);}
+thead th.kd-col{color:#ffd700;}
+thead th.macd-col{color:var(--accent2);}
+thead th.bb-col{color:var(--purple);}
+tbody tr{border-bottom:1px solid rgba(30,45,71,.6);transition:background .15s;cursor:pointer;}
+tbody tr:last-child{border-bottom:none;}
+tbody tr:hover{background:var(--surface2);}
+td{padding:11px 12px;font-size:12px;}
+.stock-code{font-family:'JetBrains Mono',monospace;font-weight:600;font-size:14px;color:#fff;}
+.stock-name{font-size:11px;color:var(--muted);margin-top:2px;}
+.mkt-badge{display:inline-block;padding:2px 7px;border-radius:5px;font-size:9px;font-weight:600;margin-top:2px;}
+.mkt-tw{background:rgba(0,132,255,.15);color:var(--accent2);}
+.mkt-two{background:rgba(255,181,71,.15);color:var(--warn);}
+.num{font-family:'JetBrains Mono',monospace;text-align:right;}
+.change-pos{color:var(--bull);}
+.change-neg{color:var(--bear);}
+.days-badge{display:inline-flex;align-items:center;justify-content:center;
+  width:28px;height:28px;border-radius:7px;
+  font-family:'JetBrains Mono',monospace;font-weight:700;font-size:13px;}
+.days-2{background:rgba(100,116,139,.15);color:var(--muted);}
+.days-3{background:rgba(255,181,71,.15);color:var(--warn);}
+.days-4{background:rgba(0,132,255,.15);color:var(--accent2);}
+.days-5{background:rgba(0,212,170,.15);color:var(--accent);box-shadow:0 0 10px rgba(0,212,170,.2);}
 
-  /* Export buttons */
-  .export-bar {
-    display: none;
-    gap: 10px;
-    margin-top: 16px;
-    flex-wrap: wrap;
-    align-items: center;
-  }
-  .export-label { font-size: 12px; color: var(--muted); margin-right: 4px; }
-  .export-btn {
-    display: inline-flex; align-items: center; gap: 8px;
-    padding: 9px 20px; border-radius: 9px; font-size: 13px; font-weight: 600;
-    font-family: 'Noto Sans TC', sans-serif; cursor: pointer; border: 1px solid;
-    transition: all 0.2s; text-decoration: none; white-space: nowrap;
-  }
-  .export-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-  .export-btn.pdf {
-    background: rgba(255,77,109,0.1); border-color: rgba(255,77,109,0.4);
-    color: #ff4d6d;
-  }
-  .export-btn.pdf:hover:not(:disabled) {
-    background: rgba(255,77,109,0.2); box-shadow: 0 4px 12px rgba(255,77,109,0.2);
-    transform: translateY(-1px);
-  }
-  .export-btn.docx {
-    background: rgba(0,132,255,0.1); border-color: rgba(0,132,255,0.4);
-    color: #0084ff;
-  }
-  .export-btn.docx:hover:not(:disabled) {
-    background: rgba(0,132,255,0.2); box-shadow: 0 4px 12px rgba(0,132,255,0.2);
-    transform: translateY(-1px);
-  }
-  .export-hint { font-size: 11px; color: var(--muted); margin-left: auto; }
+/* TA Signal chips */
+.sig-chip{display:inline-block;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:600;font-family:'JetBrains Mono',monospace;white-space:nowrap;}
+.sig-gold{background:rgba(255,215,0,.15);color:#ffd700;}
+.sig-death{background:rgba(255,77,109,.15);color:var(--bear);}
+.sig-green{background:rgba(0,217,139,.15);color:var(--bull);}
+.sig-blue{background:rgba(0,132,255,.15);color:var(--accent2);}
+.sig-purple{background:rgba(124,58,237,.15);color:var(--purple);}
+.sig-neutral{background:rgba(100,116,139,.12);color:var(--muted);}
 
-  /* Scan mode selector */
-  .mode-selector {
-    display: flex;
-    gap: 10px;
-    padding: 16px 0 8px;
-    flex-wrap: wrap;
-    align-items: center;
-  }
-  .mode-label { font-size: 12px; color: var(--muted); margin-right: 4px; white-space: nowrap; }
-  .mode-btn {
-    display: inline-flex; align-items: center; gap: 7px;
-    padding: 8px 16px; border-radius: 10px; font-size: 13px; font-weight: 500;
-    font-family: 'Noto Sans TC', sans-serif; cursor: pointer;
-    border: 1px solid var(--border); background: var(--surface);
-    color: var(--muted); transition: all 0.2s;
-  }
-  .mode-btn:hover { border-color: var(--accent); color: var(--text); }
-  .mode-btn.active {
-    background: rgba(0,212,170,0.12); border-color: var(--accent);
-    color: var(--accent); box-shadow: 0 0 14px rgba(0,212,170,0.15);
-  }
-  .mode-btn .mode-icon { font-size: 15px; }
-  .mode-btn .mode-count {
-    font-size: 10px; font-family: 'JetBrains Mono', monospace;
-    background: rgba(0,212,170,0.15); color: var(--accent);
-    padding: 1px 6px; border-radius: 6px; margin-left: 2px;
-  }
-  .mode-btn.active .mode-count { background: rgba(0,212,170,0.25); }
+/* ─── Intro ─── */
+#intro{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:70px 40px;text-align:center;gap:18px;}
+.intro-icon{font-size:52px;}
+.intro-title{font-size:24px;font-weight:700;}
+.intro-desc{color:var(--muted);font-size:14px;max-width:520px;line-height:1.8;}
+.how-cards{display:flex;gap:16px;flex-wrap:wrap;justify-content:center;margin-top:8px;}
+.how-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;
+  padding:18px;max-width:180px;text-align:center;}
+.how-card .step{font-size:26px;margin-bottom:8px;}
+.how-card h3{font-size:13px;font-weight:600;margin-bottom:5px;}
+.how-card p{font-size:11px;color:var(--muted);line-height:1.5;}
+
+/* ─── Modal ─── */
+#modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:100;
+  align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(4px);}
+#modal.open{display:flex;}
+.modal-box{background:var(--surface);border:1px solid var(--border);border-radius:16px;
+  padding:24px;width:100%;max-width:900px;max-height:90vh;overflow-y:auto;}
+.modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;}
+.modal-close{background:var(--surface2);border:1px solid var(--border);color:var(--muted);
+  width:30px;height:30px;border-radius:7px;cursor:pointer;font-size:15px;
+  display:flex;align-items:center;justify-content:center;transition:all .15s;}
+.modal-close:hover{color:var(--text);}
+
+/* Chart tabs */
+.chart-tabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;}
+.chart-tab{padding:6px 14px;border-radius:8px;font-size:12px;font-weight:500;
+  cursor:pointer;border:1px solid var(--border);background:transparent;
+  color:var(--muted);font-family:'Noto Sans TC',sans-serif;transition:all .15s;}
+.chart-tab.active{background:rgba(0,212,170,.12);border-color:var(--accent);color:var(--accent);}
+.chart-tab.kd-tab.active{background:rgba(255,215,0,.1);border-color:#ffd700;color:#ffd700;}
+.chart-tab.macd-tab.active{background:rgba(0,132,255,.1);border-color:var(--accent2);color:var(--accent2);}
+.chart-tab.bb-tab.active{background:rgba(124,58,237,.1);border-color:var(--purple);color:var(--purple);}
+
+.chart-wrap{background:var(--surface2);border:1px solid var(--border);border-radius:10px;
+  overflow:hidden;margin-bottom:14px;}
+canvas.chart{width:100%;display:block;}
+.detail-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
+.detail-item{background:var(--surface2);border-radius:9px;padding:12px;text-align:center;}
+.detail-item .label{font-size:10px;color:var(--muted);margin-bottom:5px;}
+.detail-item .value{font-size:16px;font-weight:700;font-family:'JetBrains Mono',monospace;}
+
+@media(max-width:700px){
+  thead th:nth-child(n+7){display:none;}td:nth-child(n+7){display:none;}
+  .detail-grid{grid-template-columns:repeat(2,1fr);}
+}
 </style>
 </head>
 <body>
 <div class="container">
 
-  <header>
-    <div class="header-inner">
-      <div class="brand">
-        <div class="logo-icon">📊</div>
-        <div class="brand-text">
-          <h1>台股均量追蹤系統</h1>
-          <p>TWSE · TPEX · 量能趨勢篩選器</p>
-        </div>
-      </div>
-      <button class="scan-btn" id="scanBtn" onclick="startScan()">
-        <span id="scanIcon">🔍</span>
-        <span id="scanText">開始掃描</span>
-      </button>
-    </div>
-    <div class="strategy-bar">
-      <span class="strategy-tag tag-green">📈 來源：TWSE 上市前100 + TPEX 上櫃前100</span>
-      <span class="strategy-tag tag-blue">📊 條件：5日均量 &gt; 20日均量</span>
-      <span class="strategy-tag tag-warn">⏱ 連續：2 ～ 5 個交易日</span>
-    </div>
-  </header>
-
-
-  <!-- Scan Mode Selector -->
-  <div class="mode-selector">
-    <span class="mode-label">🎯 掃描範圍：</span>
-    <button class="mode-btn" id="mode-twse" onclick="setMode('twse')">
-      <span class="mode-icon">🏦</span> 上市漲幅前100
-      <span class="mode-count">~100</span>
-    </button>
-    <button class="mode-btn" id="mode-tpex" onclick="setMode('tpex')">
-      <span class="mode-icon">🏪</span> 上櫃漲幅前100
-      <span class="mode-count">~100</span>
-    </button>
-    <button class="mode-btn" id="mode-combined" onclick="setMode('combined')">
-      <span class="mode-icon">🔀</span> 上市+上櫃合併前100
-      <span class="mode-count">~100</span>
-    </button>
-    <button class="mode-btn active" id="mode-both" onclick="setMode('both')">
-      <span class="mode-icon">⚡</span> 上市前100＋上櫃前100
-      <span class="mode-count">~200</span>
-    </button>
-  </div>
-  <!-- Error Banner -->
-  <div id="errBanner" class="err-banner" style="display:none;">
-    <span>⚠</span>
-    <span id="errMsg"></span>
-  </div>
-
-  <!-- Progress Card -->
-  <div id="progressCard">
-    <div class="prog-header">
-      <div class="prog-dot"></div>
-      <div class="prog-label" id="progLabel">準備開始...</div>
-      <div class="prog-count" id="progCount"></div>
-    </div>
-    <div class="prog-track">
-      <div class="prog-fill" id="progFill"></div>
-    </div>
-    <div class="prog-detail">
-      <span id="progStock" style="color:var(--muted)"></span>
-      <span class="prog-found" id="progFound"></span>
-    </div>
-  </div>
-
-  <!-- Stats -->
-  <div id="statsRow">
-    <div class="stat-card green"><div class="stat-label">符合條件</div><div class="stat-value" id="statMatched">0</div></div>
-    <div class="stat-card blue"><div class="stat-label">已掃描</div><div class="stat-value" id="statScanned">0</div></div>
-    <div class="stat-card warn"><div class="stat-label">耗時 (秒)</div><div class="stat-value" id="statTime">-</div></div>
-    <div class="stat-card accent"><div class="stat-label">最高連續天</div><div class="stat-value" id="statMaxDays">-</div></div>
-  </div>
-
-
-  <!-- Export Bar -->
-  <div class="export-bar" id="exportBar">
-    <span class="export-label">📥 匯出報告：</span>
-    <button class="export-btn pdf" id="btnPdf" onclick="exportReport('pdf')">
-      📄 匯出 PDF
-    </button>
-    <button class="export-btn docx" id="btnDocx" onclick="exportReport('docx')">
-      📝 匯出 Word
-    </button>
-    <span class="export-hint" id="exportHint"></span>
-  </div>
-
-  <!-- Table -->
-  <div id="tableWrap">
-    <div class="table-header">
-      <div class="table-title">
-        篩選結果 <span class="badge" id="resultCount">0 支</span>
-      </div>
-      <div>
-        <div class="timestamp" id="scanTime"></div>
-        <div class="filter-tabs" style="margin-top:8px;">
-          <button class="tab active" onclick="filterDays(0,this)">全部</button>
-          <button class="tab" onclick="filterDays(5,this)">5 日</button>
-          <button class="tab" onclick="filterDays(4,this)">4 日</button>
-          <button class="tab" onclick="filterDays(3,this)">3 日</button>
-          <button class="tab" onclick="filterDays(2,this)">2 日</button>
-        </div>
+<header>
+  <div class="header-inner">
+    <div class="brand">
+      <div class="logo-icon">📊</div>
+      <div class="brand-text">
+        <h1>台股均量＋技術分析篩選系統</h1>
+        <p>TWSE · TPEX · 量能 · KD · MACD · 布林通道</p>
       </div>
     </div>
-    <div id="emptyState" style="display:none; padding:60px; text-align:center;">
-      <div style="font-size:40px;margin-bottom:12px;">🔍</div>
-      <div style="font-size:18px;font-weight:600;margin-bottom:8px;">目前無符合條件的個股</div>
-      <div style="color:var(--muted);font-size:13px;">在當前排行中，沒有找到連續 2～5 日 5日均量 > 20日均量的個股</div>
-    </div>
-    <div style="overflow-x:auto;">
-      <table id="resultTable">
-        <thead>
-          <tr>
-            <th onclick="sortTable('code')">股票 ↕</th>
-            <th onclick="sortTable('change_pct')">漲幅 ↕</th>
-            <th onclick="sortTable('consecutive_days')">連續天 ↕</th>
-            <th onclick="sortTable('ma5_volume')">5日均量 ↕</th>
-            <th onclick="sortTable('ma20_volume')">20日均量 ↕</th>
-            <th onclick="sortTable('ratio')">均量比率 ↕</th>
-            <th>查看</th>
-          </tr>
-        </thead>
-        <tbody id="resultBody"></tbody>
-      </table>
-    </div>
+    <button class="scan-btn" id="scanBtn" onclick="startScan()">
+      <span id="scanIcon">🔍</span><span id="scanText">開始掃描</span>
+    </button>
   </div>
-
-  <!-- Intro -->
-  <div id="intro">
-    <div class="intro-icon">⚡</div>
-    <div class="intro-title">量能趨勢篩選</div>
-    <div class="intro-desc">
-      自動掃描 TWSE 上市 + TPEX 上櫃漲幅排行，篩選出
-      <strong style="color:var(--accent)">5日均量 &gt; 20日均量</strong> 且連續
-      <strong style="color:var(--warn)">2 ～ 5 個交易日</strong> 持續此狀態的個股。
-    </div>
-    <div class="how-it-works">
-      <div class="how-card"><div class="step">🌐</div><h3>抓取排行榜</h3><p>從 TWSE/TPEX 公開 API 取得當日強勢個股清單</p></div>
-      <div class="how-card"><div class="step">📐</div><h3>計算均量</h3><p>取得近 60 日歷史量能，計算 5 日和 20 日移動平均</p></div>
-      <div class="how-card"><div class="step">🎯</div><h3>篩選條件</h3><p>找出 5MA > 20MA 連續 3～5 日的量能放大個股</p></div>
-    </div>
+  <div class="strategy-bar">
+    <span class="tag tag-g">📈 來源：TWSE+TPEX</span>
+    <span class="tag tag-b">📊 均量：5MA &gt; 20MA 連續2～5日</span>
+    <span class="tag tag-w">⚡ 技術：KD / MACD / 布林通道</span>
   </div>
+</header>
 
+<!-- Mode Selector -->
+<div class="mode-selector">
+  <span class="mode-label">🎯 掃描範圍：</span>
+  <button class="mode-btn" id="mode-twse"     onclick="setMode('twse')">🏦 上市前100 <span class="mode-cnt">~100</span></button>
+  <button class="mode-btn" id="mode-tpex"     onclick="setMode('tpex')">🏪 上櫃前100 <span class="mode-cnt">~100</span></button>
+  <button class="mode-btn" id="mode-combined" onclick="setMode('combined')">🔀 合併前100 <span class="mode-cnt">~100</span></button>
+  <button class="mode-btn active" id="mode-both" onclick="setMode('both')">⚡ 上市+上櫃各前100 <span class="mode-cnt">~200</span></button>
 </div>
 
-<!-- Detail Modal -->
+<!-- TA Filter Panel -->
+<div class="ta-panel">
+  <div class="ta-panel-header">
+    <div class="ta-panel-title">📐 技術指標附加篩選條件 <span style="font-size:11px;color:var(--muted);font-weight:400">（勾選後在均量條件通過的個股中進一步篩選，可複選）</span></div>
+    <button onclick="clearTaFilters()" style="font-size:11px;color:var(--muted);background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;">清除全選</button>
+  </div>
+  <div class="ta-groups">
+
+    <div class="ta-group">
+      <div class="ta-group-label">📈 KD 隨機指標</div>
+      <div class="ta-checks">
+        <label class="ta-check-item"><input type="checkbox" id="f_kd_golden"><span class="ta-checkmark">✓</span>
+          <span class="ta-check-text">黃金交叉</span><span class="ta-check-badge badge-kd">K&gt;D 翻多</span></label>
+        <label class="ta-check-item"><input type="checkbox" id="f_kd_oversold"><span class="ta-checkmark">✓</span>
+          <span class="ta-check-text">超賣反彈區</span><span class="ta-check-badge badge-kd">K&lt;20</span></label>
+        <label class="ta-check-item"><input type="checkbox" id="f_kd_k_above_d"><span class="ta-checkmark">✓</span>
+          <span class="ta-check-text">多頭排列</span><span class="ta-check-badge badge-kd">K&gt;D</span></label>
+        <label class="ta-check-item"><input type="checkbox" id="f_kd_overbought_not"><span class="ta-checkmark">✓</span>
+          <span class="ta-check-text">排除超買</span><span class="ta-check-badge badge-kd">K&lt;80</span></label>
+      </div>
+    </div>
+
+    <div class="ta-group">
+      <div class="ta-group-label">📉 MACD 指標</div>
+      <div class="ta-checks">
+        <label class="ta-check-item"><input type="checkbox" id="f_macd_golden"><span class="ta-checkmark">✓</span>
+          <span class="ta-check-text">黃金交叉</span><span class="ta-check-badge badge-macd">MACD&gt;訊號</span></label>
+        <label class="ta-check-item"><input type="checkbox" id="f_macd_above_zero"><span class="ta-checkmark">✓</span>
+          <span class="ta-check-text">零軸以上</span><span class="ta-check-badge badge-macd">MACD&gt;0</span></label>
+        <label class="ta-check-item"><input type="checkbox" id="f_macd_hist_expand"><span class="ta-checkmark">✓</span>
+          <span class="ta-check-text">柱狀圖擴張</span><span class="ta-check-badge badge-macd">Hist↑</span></label>
+      </div>
+    </div>
+
+    <div class="ta-group">
+      <div class="ta-group-label">🔵 布林通道</div>
+      <div class="ta-checks">
+        <label class="ta-check-item"><input type="checkbox" id="f_bb_above_mid"><span class="ta-checkmark">✓</span>
+          <span class="ta-check-text">中軌以上</span><span class="ta-check-badge badge-bb">價&gt;MA20</span></label>
+        <label class="ta-check-item"><input type="checkbox" id="f_bb_near_upper"><span class="ta-checkmark">✓</span>
+          <span class="ta-check-text">接近/突破上軌</span><span class="ta-check-badge badge-bb">≥上軌99%</span></label>
+        <label class="ta-check-item"><input type="checkbox" id="f_bb_near_lower"><span class="ta-checkmark">✓</span>
+          <span class="ta-check-text">接近下軌反彈</span><span class="ta-check-badge badge-bb">≤下軌101%</span></label>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Error Banner -->
+<div id="errBanner" class="err-banner" style="display:none;">
+  <span>⚠</span><span id="errMsg"></span>
+</div>
+
+<!-- Progress -->
+<div id="progressCard">
+  <div class="prog-header">
+    <div class="prog-dot"></div>
+    <div class="prog-label" id="progLabel">準備開始...</div>
+    <div class="prog-count" id="progCount"></div>
+  </div>
+  <div class="prog-track"><div class="prog-fill" id="progFill"></div></div>
+  <div class="prog-detail">
+    <span id="progStock" style="color:var(--muted)"></span>
+    <span class="prog-found" id="progFound"></span>
+  </div>
+</div>
+
+<!-- Stats -->
+<div id="statsRow">
+  <div class="stat-card green"><div class="stat-label">符合均量條件</div><div class="stat-value" id="statMatched">0</div></div>
+  <div class="stat-card blue"><div class="stat-label">篩選後顯示</div><div class="stat-value" id="statFiltered">0</div></div>
+  <div class="stat-card warn"><div class="stat-label">耗時(秒)</div><div class="stat-value" id="statTime">-</div></div>
+  <div class="stat-card accent"><div class="stat-label">最高連續天</div><div class="stat-value" id="statMaxDays">-</div></div>
+</div>
+
+<!-- Export Bar -->
+<div class="export-bar" id="exportBar">
+  <span class="export-label">📥 匯出報告：</span>
+  <button class="export-btn pdf"  id="btnPdf"  onclick="exportReport('pdf')">📄 匯出 PDF</button>
+  <button class="export-btn docx" id="btnDocx" onclick="exportReport('docx')">📝 匯出 Word</button>
+  <span class="export-hint" id="exportHint"></span>
+</div>
+
+<!-- Table -->
+<div id="tableWrap">
+  <div class="table-header">
+    <div>
+      <div class="table-title">篩選結果 <span class="badge" id="resultCount">0 支</span></div>
+      <div class="timestamp" id="scanTime"></div>
+    </div>
+    <div>
+      <div class="filter-tabs">
+        <button class="tab active" onclick="filterDays(0,this)">全部</button>
+        <button class="tab" onclick="filterDays(5,this)">5日</button>
+        <button class="tab" onclick="filterDays(4,this)">4日</button>
+        <button class="tab" onclick="filterDays(3,this)">3日</button>
+        <button class="tab" onclick="filterDays(2,this)">2日</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="emptyState" style="display:none;padding:50px;text-align:center;">
+    <div style="font-size:36px;margin-bottom:10px;">🔍</div>
+    <div style="font-size:16px;font-weight:600;margin-bottom:6px;">無符合條件的個股</div>
+    <div style="color:var(--muted);font-size:12px;">試試取消部分技術指標篩選條件</div>
+  </div>
+
+  <div style="overflow-x:auto;">
+    <table id="resultTable">
+      <thead>
+        <tr>
+          <th onclick="sortBy('code')">股票 ↕</th>
+          <th onclick="sortBy('change_pct')">漲幅 ↕</th>
+          <th onclick="sortBy('consecutive_days')">連續 ↕</th>
+          <th onclick="sortBy('ma5_volume')">5MA量 ↕</th>
+          <th onclick="sortBy('ratio')">比率 ↕</th>
+          <th class="kd-col" onclick="sortBy('k')">K值 ↕</th>
+          <th class="kd-col" onclick="sortBy('d')">D值 ↕</th>
+          <th class="kd-col">KD訊號</th>
+          <th class="macd-col" onclick="sortBy('macd_hist')">MACD柱 ↕</th>
+          <th class="macd-col">MACD訊號</th>
+          <th class="bb-col" onclick="sortBy('bb_pos')">布林位 ↕</th>
+          <th class="bb-col">布林訊號</th>
+          <th>圖表</th>
+        </tr>
+      </thead>
+      <tbody id="resultBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Intro -->
+<div id="intro">
+  <div class="intro-icon">⚡</div>
+  <div class="intro-title">均量＋技術分析 全方位篩選</div>
+  <div class="intro-desc">先從漲幅排行中找出<strong style="color:var(--accent)">5日均量 &gt; 20日均量連續 2～5 日</strong>的個股，<br>再依 <strong style="color:#ffd700">KD</strong>、<strong style="color:var(--accent2)">MACD</strong>、<strong style="color:var(--purple)">布林通道</strong> 進行進階篩選。</div>
+  <div class="how-cards">
+    <div class="how-card"><div class="step">🌐</div><h3>取得排行</h3><p>TWSE/TPEX 公開 API 當日漲幅排行</p></div>
+    <div class="how-card"><div class="step">📊</div><h3>均量篩選</h3><p>5MA量 &gt; 20MA量<br>連續 2～5 日</p></div>
+    <div class="how-card"><div class="step">📈</div><h3>KD 分析</h3><p>黃金交叉<br>超賣反彈<br>多頭排列</p></div>
+    <div class="how-card"><div class="step">📉</div><h3>MACD 分析</h3><p>黃金交叉<br>零軸以上<br>柱狀擴張</p></div>
+    <div class="how-card"><div class="step">🔵</div><h3>布林通道</h3><p>中軌以上<br>突破上軌<br>下軌反彈</p></div>
+  </div>
+</div>
+
+</div><!-- /container -->
+
+<!-- Modal -->
 <div id="modal">
   <div class="modal-box">
     <div class="modal-header">
       <div>
         <div class="stock-code" id="modalCode" style="font-size:20px;"></div>
-        <div class="stock-name" id="modalName" style="font-size:14px;margin-top:4px;"></div>
+        <div class="stock-name" id="modalName" style="font-size:13px;margin-top:3px;"></div>
       </div>
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
-    <canvas id="chartCanvas"></canvas>
+
+    <div class="chart-tabs" id="chartTabs">
+      <button class="chart-tab active"     onclick="switchChart('price',this)">📈 價量</button>
+      <button class="chart-tab kd-tab"     onclick="switchChart('kd',this)">KD 隨機指標</button>
+      <button class="chart-tab macd-tab"   onclick="switchChart('macd',this)">MACD</button>
+      <button class="chart-tab bb-tab"     onclick="switchChart('bb',this)">🔵 布林通道</button>
+    </div>
+
+    <div class="chart-wrap">
+      <canvas id="chartCanvas" class="chart" height="220"></canvas>
+    </div>
+
     <div class="detail-grid" id="detailGrid"></div>
   </div>
 </div>
 
 <script>
-let allData = [];
+// ── State ──
+let allData      = [];
+let filteredData = [];
 let currentFilter = 0;
-let sortField = 'consecutive_days';
-let sortDir = -1;
-let pollTimer = null;
+let sortField    = 'consecutive_days';
+let sortDir      = -1;
+let pollTimer    = null;
 let selectedMode = 'both';
+let currentChartMode = 'price';
+let currentChartData = null;
+let currentStock     = null;
 
 const modeLabels = {
-  twse:     '上市漲幅前100名',
-  tpex:     '上櫃漲幅前100名',
-  combined: '上市+上櫃合併漲幅前100名',
-  both:     '上市前100 + 上櫃前100（共200名）',
+  twse:'上市前100', tpex:'上櫃前100', combined:'合併前100', both:'上市前100+上櫃前100'
 };
 
-function setMode(mode) {
-  selectedMode = mode;
-  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById(`mode-${mode}`).classList.add('active');
+// ── TA filter helpers ──
+function getTaFilters() {
+  return {
+    kd_golden:      document.getElementById('f_kd_golden').checked,
+    kd_oversold:    document.getElementById('f_kd_oversold').checked,
+    kd_k_above_d:   document.getElementById('f_kd_k_above_d').checked,
+    kd_overbought_not: document.getElementById('f_kd_overbought_not').checked,
+    macd_golden:    document.getElementById('f_macd_golden').checked,
+    macd_above_zero:document.getElementById('f_macd_above_zero').checked,
+    macd_hist_expand:document.getElementById('f_macd_hist_expand').checked,
+    bb_above_mid:   document.getElementById('f_bb_above_mid').checked,
+    bb_near_upper:  document.getElementById('f_bb_near_upper').checked,
+    bb_near_lower:  document.getElementById('f_bb_near_lower').checked,
+  };
 }
 
+function clearTaFilters() {
+  ['f_kd_golden','f_kd_oversold','f_kd_k_above_d','f_kd_overbought_not',
+   'f_macd_golden','f_macd_above_zero','f_macd_hist_expand',
+   'f_bb_above_mid','f_bb_near_upper','f_bb_near_lower']
+    .forEach(id => document.getElementById(id).checked = false);
+  if (allData.length) applyFilters();
+}
+
+// Attach listeners to TA checkboxes
+document.querySelectorAll('.ta-check-item input').forEach(el =>
+  el.addEventListener('change', () => { if (allData.length) applyFilters(); })
+);
+
+function applyFilters() {
+  const f = getTaFilters();
+  const anyTA = Object.values(f).some(Boolean);
+  let data = currentFilter > 0
+    ? allData.filter(s => s.consecutive_days === currentFilter)
+    : [...allData];
+
+  if (anyTA) {
+    data = data.filter(s => {
+      if (f.kd_golden      && !s.kd_golden)       return false;
+      if (f.kd_oversold    && !s.kd_oversold)      return false;
+      if (f.kd_k_above_d   && !s.kd_k_above_d)    return false;
+      if (f.kd_overbought_not && s.kd_overbought)  return false;
+      if (f.macd_golden    && !s.macd_golden)      return false;
+      if (f.macd_above_zero && !s.macd_above_zero) return false;
+      if (f.macd_hist_expand && !s.macd_hist_expand) return false;
+      if (f.bb_above_mid   && !s.bb_above_mid)     return false;
+      if (f.bb_near_upper  && !s.bb_near_upper)    return false;
+      if (f.bb_near_lower  && !s.bb_near_lower)    return false;
+      return true;
+    });
+  }
+
+  filteredData = data;
+  renderTable(filteredData);
+  document.getElementById('statFiltered').textContent = filteredData.length;
+}
+
+// ── Mode ──
+function setMode(m) {
+  selectedMode = m;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(`mode-${m}`).classList.add('active');
+}
+
+// ── Scan ──
 async function startScan() {
   const btn  = document.getElementById('scanBtn');
   const icon = document.getElementById('scanIcon');
   const text = document.getElementById('scanText');
-
   btn.disabled = true;
   icon.innerHTML = '<span class="spin">⟳</span>';
   text.textContent = '掃描中...';
 
-  document.getElementById('intro').style.display = 'none';
-  document.getElementById('tableWrap').style.display = 'none';
-  document.getElementById('statsRow').style.display = 'none';
-  document.getElementById('errBanner').style.display = 'none';
+  document.getElementById('intro').style.display       = 'none';
+  document.getElementById('tableWrap').style.display   = 'none';
+  document.getElementById('statsRow').style.display    = 'none';
+  document.getElementById('exportBar').style.display   = 'none';
+  document.getElementById('errBanner').style.display   = 'none';
   document.getElementById('progressCard').style.display = 'block';
   document.getElementById('progFill').style.width = '0%';
   document.getElementById('progLabel').textContent = `正在建立任務【${modeLabels[selectedMode]}】...`;
@@ -490,83 +542,65 @@ async function startScan() {
   document.getElementById('progFound').textContent = '';
 
   try {
-    // 1. 建立任務
-    const resp = await fetch('/api/analyze/start', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({mode: selectedMode}) });
-
-    // 安全解析：先確認是 JSON，不是 HTML 錯誤頁
+    const resp = await fetch('/api/analyze/start', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({mode: selectedMode})
+    });
     const ct = resp.headers.get('content-type') || '';
     if (!ct.includes('application/json')) {
-      const text = await resp.text();
-      throw new Error(`伺服器回傳非 JSON（HTTP ${resp.status}）：${text.slice(0, 120)}`);
+      const t = await resp.text();
+      throw new Error(`伺服器回傳非JSON(HTTP${resp.status}): ${t.slice(0,100)}`);
     }
-    if (!resp.ok) {
-      const err = await resp.json();
-      throw new Error(err.error || `HTTP ${resp.status}`);
-    }
-    const { task_id } = await resp.json();
-
-    // 2. 開始輪詢狀態
+    const {task_id} = await resp.json();
     pollTask(task_id, btn, icon, text);
-
-  } catch (err) {
-    showError('無法連線到伺服器：' + err.message);
+  } catch(err) {
+    showError('無法連線：' + err.message);
     resetBtn(btn, icon, text);
   }
 }
 
-// 安全 fetch JSON 工具
 async function fetchJSON(url, opts) {
   const resp = await fetch(url, opts);
   const ct = resp.headers.get('content-type') || '';
   if (!ct.includes('application/json')) {
-    const text = await resp.text();
-    throw new Error(`HTTP ${resp.status}，回傳非 JSON：${text.slice(0, 120)}`);
+    const t = await resp.text();
+    throw new Error(`HTTP${resp.status}，非JSON: ${t.slice(0,100)}`);
   }
   const data = await resp.json();
-  if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+  if (!resp.ok) throw new Error(data.error || `HTTP${resp.status}`);
   return data;
 }
 
 function pollTask(task_id, btn, icon, text) {
-  let foundCount = 0;
-  let failCount  = 0;   // 連續失敗計數，允許最多 3 次才放棄
-
+  let failCount = 0;
   pollTimer = setInterval(async () => {
     try {
       const task = await fetchJSON(`/api/analyze/status/${task_id}`);
-      failCount = 0;  // 成功就重置
+      failCount = 0;
+      if (task.error) { clearInterval(pollTimer); showError(task.error); resetBtn(btn,icon,text); return; }
 
-      if (task.error) {
-        clearInterval(pollTimer);
-        showError(task.error);
-        resetBtn(btn, icon, text);
-        return;
-      }
-
-      // 更新進度 UI
       if (task.status === 'fetching' || task.status === 'pending') {
         document.getElementById('progLabel').textContent = task.msg;
 
       } else if (task.status === 'analyzing') {
-        const pct = task.total > 0 ? Math.round((task.current / task.total) * 100) : 0;
-        document.getElementById('progFill').style.width = pct + '%';
+        const pct = task.total > 0 ? Math.round(task.current/task.total*100) : 0;
+        document.getElementById('progFill').style.width  = pct + '%';
         document.getElementById('progLabel').textContent = task.msg;
-        document.getElementById('progCount').textContent = `${task.current} / ${task.total}`;
-        document.getElementById('progStock').textContent =
-          task.current_code ? `🔍 ${task.current_code} ${task.current_name}` : '';
-        if (task.total_found > foundCount) {
-          foundCount = task.total_found;
-          document.getElementById('progFound').textContent = `✅ 已找到 ${foundCount} 支符合個股`;
-        }
+        document.getElementById('progCount').textContent = `${task.current}/${task.total}`;
+        document.getElementById('progStock').textContent = task.current_code ? `🔍 ${task.current_code} ${task.current_name}` : '';
+        if (task.total_found > 0)
+          document.getElementById('progFound').textContent = `✅ 已找到 ${task.total_found} 支`;
 
       } else if (task.status === 'done') {
         clearInterval(pollTimer);
         document.getElementById('progressCard').style.display = 'none';
         allData = task.stocks;
         renderStats(task);
-        document.getElementById('exportBar').style.display = allData.length > 0 ? 'flex' : 'none';
-        renderTable(allData);
-        document.getElementById('scanTime').textContent = `掃描時間：${task.timestamp}　　範圍：${modeLabels[selectedMode]}`;
+        applyFilters();
+        document.getElementById('scanTime').textContent = `掃描時間：${task.timestamp}　範圍：${modeLabels[selectedMode]}`;
+        if (allData.length > 0)
+          document.getElementById('exportBar').style.display = 'flex';
         resetBtn(btn, icon, text);
 
       } else if (task.status === 'error') {
@@ -575,261 +609,452 @@ function pollTask(task_id, btn, icon, text) {
         showError(task.msg);
         resetBtn(btn, icon, text);
       }
-
-    } catch (err) {
+    } catch(err) {
       failCount++;
-      console.warn(`輪詢失敗 (${failCount}/3)：`, err.message);
-      if (failCount >= 3) {
-        clearInterval(pollTimer);
-        showError(`輪詢連續失敗：${err.message}`);
-        resetBtn(btn, icon, text);
-      }
-      // 失敗次數未達上限 → 下次繼續輪詢，不中斷
+      if (failCount >= 3) { clearInterval(pollTimer); showError('輪詢失敗: '+err.message); resetBtn(btn,icon,text); }
     }
   }, 2000);
 }
 
 function resetBtn(btn, icon, text) {
-  btn.disabled = false;
-  icon.innerHTML = '🔍';
-  text.textContent = '重新掃描';
+  btn.disabled = false; icon.innerHTML = '🔍'; text.textContent = '重新掃描';
 }
-
 function showError(msg) {
   document.getElementById('progressCard').style.display = 'none';
   document.getElementById('errBanner').style.display = 'flex';
   document.getElementById('errMsg').textContent = msg;
 }
 
+// ── Stats ──
 function renderStats(data) {
   document.getElementById('statsRow').style.display = 'flex';
   document.getElementById('statMatched').textContent = data.total_found ?? data.total;
-  document.getElementById('statScanned').textContent = data.scanned;
-  document.getElementById('statTime').textContent = data.elapsed;
-  const maxDays = data.stocks.length > 0
-    ? Math.max(...data.stocks.map(s => s.consecutive_days)) : '-';
-  document.getElementById('statMaxDays').textContent = maxDays;
+  document.getElementById('statTime').textContent    = data.elapsed;
+  const maxD = data.stocks.length > 0 ? Math.max(...data.stocks.map(s=>s.consecutive_days)) : '-';
+  document.getElementById('statMaxDays').textContent = maxD;
 }
 
+// ── Table ──
 function renderTable(stocks) {
   document.getElementById('tableWrap').style.display = 'block';
-  const filtered = currentFilter > 0 ? stocks.filter(s => s.consecutive_days === currentFilter) : stocks;
-  document.getElementById('resultCount').textContent = `${filtered.length} 支`;
+  document.getElementById('resultCount').textContent = `${stocks.length} 支`;
 
-  if (filtered.length === 0) {
+  if (stocks.length === 0) {
     document.getElementById('emptyState').style.display = 'block';
     document.getElementById('resultTable').style.display = 'none';
+    document.getElementById('statFiltered').textContent = 0;
     return;
   }
   document.getElementById('emptyState').style.display = 'none';
   document.getElementById('resultTable').style.display = 'table';
+  document.getElementById('statFiltered').textContent = stocks.length;
 
   const tbody = document.getElementById('resultBody');
-  tbody.innerHTML = filtered.map(s => {
-    const changePct  = s.change_pct || 0;
-    const changeSign = changePct >= 0 ? '+' : '';
-    const changeClass = changePct >= 0 ? 'change-pos' : 'change-neg';
-    const daysClass = s.consecutive_days === 5 ? 'days-5' : s.consecutive_days === 4 ? 'days-4' : s.consecutive_days === 3 ? 'days-3' : 'days-2';
+  tbody.innerHTML = stocks.map(s => {
+    const chgCls = s.change_pct >= 0 ? 'change-pos' : 'change-neg';
+    const chgSign = s.change_pct >= 0 ? '+' : '';
+    const daysCls = `days-${s.consecutive_days}`;
     const ratio = s.ratio || 1;
-    const pct = Math.min((ratio - 1) * 200, 100);
-    const mktClass = s.market === '上市' ? 'mkt-tw' : 'mkt-two';
+    const ratioBar = Math.min((ratio-1)*200, 100);
 
-    return `<tr onclick="showDetail('${s.code}','${s.name}')">
+    const kdSig  = sigChip(s.kd_signal);
+    const macdSig = sigChip(s.macd_signal_str);
+    const bbSig  = sigChip(s.bb_signal);
+    const bbPos  = s.bb_pos != null ? `${(s.bb_pos*100).toFixed(0)}%` : '-';
+    const k = s.k != null ? s.k.toFixed(1) : '-';
+    const d = s.d != null ? s.d.toFixed(1) : '-';
+    const hist = s.macd_hist != null ? s.macd_hist.toFixed(3) : '-';
+    const histColor = s.macd_hist > 0 ? 'var(--bull)' : 'var(--bear)';
+
+    return `<tr onclick="showDetail('${s.code}','${s.name || s.code}')">
       <td>
         <div class="stock-code">${s.code}</div>
-        <div class="stock-name">${s.name || '-'}</div>
-        <span class="mkt-badge ${mktClass}">${s.market || ''}</span>
+        <div class="stock-name">${s.name||''}</div>
+        <span class="mkt-badge ${s.market==='上市'?'mkt-tw':'mkt-two'}">${s.market||''}</span>
       </td>
-      <td class="num ${changeClass}">${changeSign}${changePct.toFixed(2)}%</td>
-      <td style="text-align:center;"><span class="days-badge ${daysClass}">${s.consecutive_days}</span></td>
+      <td class="num ${chgCls}">${chgSign}${s.change_pct.toFixed(2)}%</td>
+      <td style="text-align:center"><span class="days-badge ${daysCls}">${s.consecutive_days}</span></td>
       <td class="num" style="color:var(--accent)">${fmtVol(s.ma5_volume)}</td>
-      <td class="num" style="color:var(--muted)">${fmtVol(s.ma20_volume)}</td>
       <td>
-        <div class="ratio-bar">
-          <div class="ratio-track"><div class="ratio-fill" style="width:${pct}%"></div></div>
-          <span class="vol-num">${ratio.toFixed(2)}x</span>
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="width:60px;height:4px;background:var(--border);border-radius:2px;overflow:hidden">
+            <div style="height:100%;width:${ratioBar}%;background:linear-gradient(90deg,var(--accent2),var(--accent));border-radius:2px"></div>
+          </div>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted)">${ratio.toFixed(2)}x</span>
         </div>
       </td>
+      <td class="num" style="color:#ffd700">${k}</td>
+      <td class="num" style="color:#ffd700">${d}</td>
+      <td>${kdSig}</td>
+      <td class="num" style="color:${histColor}">${hist}</td>
+      <td>${macdSig}</td>
+      <td class="num" style="color:var(--purple)">${bbPos}</td>
+      <td>${bbSig}</td>
       <td>
-        <a href="https://tw.stock.yahoo.com/quote/${s.code}.TW" target="_blank" onclick="event.stopPropagation()"
-           style="color:var(--accent2);font-size:12px;text-decoration:none;padding:4px 10px;
-                  border:1px solid rgba(0,132,255,0.3);border-radius:6px;background:rgba(0,132,255,0.1);">
-          ↗
-        </a>
+        <button onclick="event.stopPropagation();showDetail('${s.code}','${s.name||s.code}')"
+          style="background:rgba(0,212,170,.1);border:1px solid rgba(0,212,170,.3);color:var(--accent);
+                 padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;font-family:inherit">
+          圖表
+        </button>
       </td>
     </tr>`;
   }).join('');
 }
 
+function sigChip(sig) {
+  if (!sig || sig === '-') return '<span class="sig-chip sig-neutral">-</span>';
+  const map = {
+    '黃金交叉':'sig-gold','死亡交叉':'sig-death',
+    '超賣區':'sig-green','多頭排列':'sig-green',
+    '空頭排列':'sig-neutral','超買區':'sig-neutral',
+    '零軸上方':'sig-blue','零軸下方':'sig-neutral',
+    '突破上軌':'sig-purple','接近下軌':'sig-green',
+    '中軌以上':'sig-blue','中軌以下':'sig-neutral',
+  };
+  const cls = map[sig] || 'sig-neutral';
+  return `<span class="sig-chip ${cls}">${sig}</span>`;
+}
+
 function fmtVol(n) {
   if (!n) return '-';
-  if (n >= 1e8) return (n/1e8).toFixed(1) + '億';
-  if (n >= 1e4) return Math.round(n/1e3) + 'K';
+  if (n >= 1e8) return (n/1e8).toFixed(1)+'億';
+  if (n >= 1e4) return Math.round(n/1e3)+'K';
   return n.toString();
 }
 
-function filterDays(days, el) {
-  currentFilter = days;
+function filterDays(d, el) {
+  currentFilter = d;
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   if (el) el.classList.add('active');
-  renderTable(allData);
+  applyFilters();
 }
 
-function sortTable(field) {
-  if (sortField === field) sortDir *= -1;
-  else { sortField = field; sortDir = -1; }
-  allData.sort((a, b) => {
-    const av = a[field] ?? 0, bv = b[field] ?? 0;
-    if (typeof av === 'string') return av.localeCompare(bv) * sortDir;
-    return (av - bv) * sortDir;
+function sortBy(field) {
+  if (sortField === field) sortDir *= -1; else { sortField = field; sortDir = -1; }
+  allData.sort((a,b) => {
+    const av = a[field]??0, bv = b[field]??0;
+    if (typeof av === 'string') return av.localeCompare(bv)*sortDir;
+    return (av-bv)*sortDir;
   });
-  renderTable(allData);
+  applyFilters();
 }
 
+// ── Detail Modal / Charts ──
 async function showDetail(code, name) {
   document.getElementById('modal').classList.add('open');
   document.getElementById('modalCode').textContent = code;
-  document.getElementById('modalName').textContent = name || code;
+  document.getElementById('modalName').textContent = name;
   document.getElementById('detailGrid').innerHTML =
     '<div style="color:var(--muted);text-align:center;padding:20px;grid-column:1/-1">載入中...</div>';
+
+  currentStock = allData.find(s => s.code === code) || null;
+  currentChartMode = 'price';
+  document.querySelectorAll('.chart-tab').forEach(t => t.classList.remove('active'));
+  document.querySelector('.chart-tab').classList.add('active');
+
   try {
-    const resp = await fetch(`/api/stock/${code}`);
-    const data = await resp.json();
-    drawChart(data);
-    const stock = allData.find(s => s.code === code);
-    if (stock) {
-      document.getElementById('detailGrid').innerHTML = `
-        <div class="detail-item"><div class="label">連續天數</div><div class="value" style="color:var(--accent)">${stock.consecutive_days} 日</div></div>
-        <div class="detail-item"><div class="label">5日均量</div><div class="value" style="color:var(--bull)">${fmtVol(stock.ma5_volume)}</div></div>
-        <div class="detail-item"><div class="label">20日均量</div><div class="value" style="color:var(--muted)">${fmtVol(stock.ma20_volume)}</div></div>
-        <div class="detail-item"><div class="label">均量比率</div><div class="value" style="color:var(--accent2)">${stock.ratio}x</div></div>
-        <div class="detail-item"><div class="label">今日漲幅</div>
-          <div class="value" style="color:${stock.change_pct>=0?'var(--bull)':'var(--bear)'}">
-            ${stock.change_pct>=0?'+':''}${stock.change_pct}%
-          </div></div>
-        <div class="detail-item"><div class="label">今日股價</div><div class="value">${stock.price || '-'}</div></div>`;
-    }
+    const data = await fetchJSON(`/api/stock/${code}`);
+    currentChartData = data;
+    drawChart(data, 'price');
+    renderDetailGrid(currentStock);
   } catch(e) {
     document.getElementById('detailGrid').innerHTML =
-      '<div style="color:var(--bear);grid-column:1/-1;text-align:center;padding:20px;">無法載入資料</div>';
+      '<div style="color:var(--bear);grid-column:1/-1;text-align:center;padding:20px">無法載入資料</div>';
   }
 }
 
-function drawChart(data) {
+function switchChart(mode, el) {
+  currentChartMode = mode;
+  document.querySelectorAll('.chart-tab').forEach(t => t.classList.remove('active'));
+  if (el) el.classList.add('active');
+  if (currentChartData) drawChart(currentChartData, mode);
+}
+
+function renderDetailGrid(s) {
+  if (!s) return;
+  const items = [
+    {l:'連續天數',     v:`${s.consecutive_days} 日`,     c:'var(--accent)'},
+    {l:'5日均量',      v:fmtVol(s.ma5_volume),            c:'var(--bull)'},
+    {l:'均量比率',     v:`${s.ratio}x`,                   c:'var(--accent2)'},
+    {l:'今日漲幅',     v:`${s.change_pct>=0?'+':''}${s.change_pct}%`, c:s.change_pct>=0?'var(--bull)':'var(--bear)'},
+    {l:'K值',          v:s.k!=null?s.k.toFixed(2):'-',    c:'#ffd700'},
+    {l:'D值',          v:s.d!=null?s.d.toFixed(2):'-',    c:'#ffd700'},
+    {l:'KD訊號',       v:s.kd_signal||'-',                c:'#ffd700'},
+    {l:'MACD',         v:s.macd!=null?s.macd.toFixed(4):'-', c:'var(--accent2)'},
+    {l:'MACD訊號',     v:s.macd_signal_str||'-',          c:'var(--accent2)'},
+    {l:'布林位置',     v:s.bb_pos!=null?`${(s.bb_pos*100).toFixed(0)}%`:'-', c:'var(--purple)'},
+    {l:'布林訊號',     v:s.bb_signal||'-',                c:'var(--purple)'},
+    {l:'股價',         v:s.price||'-',                    c:'var(--text)'},
+  ];
+  document.getElementById('detailGrid').innerHTML = items.map(i =>
+    `<div class="detail-item"><div class="label">${i.l}</div>
+      <div class="value" style="color:${i.c};font-size:13px">${i.v}</div></div>`
+  ).join('');
+}
+
+// ── Chart Drawing ──
+function drawChart(data, mode) {
   const canvas = document.getElementById('chartCanvas');
-  const ctx = canvas.getContext('2d');
-  canvas.width = canvas.offsetWidth;
-  canvas.height = canvas.offsetHeight;
-  const w = canvas.width, h = canvas.height;
-  const pad = { top:16, right:16, bottom:32, left:60 };
-  const plotW = w - pad.left - pad.right, plotH = h - pad.top - pad.bottom;
-  ctx.clearRect(0,0,w,h);
-  const n = data.dates.length;
+  const ctx    = canvas.getContext('2d');
+  const W = canvas.offsetWidth || 800;
+  const H = mode === 'price' ? 280 : 200;
+  canvas.width  = W;
+  canvas.height = H;
+  ctx.clearRect(0,0,W,H);
+
+  const pad = {top:16, right:16, bottom:30, left:62};
+  const pw  = W - pad.left - pad.right;
+  const ph  = H - pad.top  - pad.bottom;
+  const n   = data.dates.length;
   if (n === 0) return;
-  const allVals = [...data.volume, ...data.ma5.filter(v=>v), ...data.ma20.filter(v=>v)].filter(v=>v>0);
-  const maxV = Math.max(...allVals) * 1.1;
-  const xScale = i => pad.left + (i/(n-1)) * plotW;
-  const yScale = v => pad.top + plotH - (v/maxV) * plotH;
-  // Grid
-  for (let i=0; i<=4; i++) {
-    const y = pad.top + (plotH/4)*i;
-    ctx.strokeStyle='rgba(30,45,71,0.8)'; ctx.lineWidth=1;
-    ctx.beginPath(); ctx.moveTo(pad.left,y); ctx.lineTo(w-pad.right,y); ctx.stroke();
-    ctx.fillStyle='#4a5568'; ctx.font='10px JetBrains Mono'; ctx.textAlign='right';
-    ctx.fillText(fmtVol(maxV*(1-i/4)), pad.left-6, y+3);
-  }
-  // Volume bars
-  const barW = Math.max(1, plotW/n - 1);
-  data.volume.forEach((v,i) => {
-    if (!v) return;
-    const x=xScale(i), y=yScale(v), bh=pad.top+plotH-y;
-    ctx.fillStyle='rgba(0,132,255,0.35)';
-    ctx.fillRect(x-barW/2,y,barW,bh);
-  });
-  // MA lines
-  const drawLine = (vals, color, dash=[]) => {
-    const pts = vals.map((v,i) => v!==null?[xScale(i),yScale(v)]:null).filter(Boolean);
-    if (pts.length<2) return;
-    ctx.setLineDash(dash); ctx.strokeStyle=color; ctx.lineWidth=2;
-    ctx.beginPath(); pts.forEach(([x,y],i)=>i===0?ctx.moveTo(x,y):ctx.lineTo(x,y)); ctx.stroke();
-    ctx.setLineDash([]);
+
+  const xS = i => pad.left + (i/(n-1))*pw;
+  const yS = (v, mn, mx) => pad.top + ph - ((v-mn)/(mx-mn||1))*ph;
+
+  const grid = (mn, mx, steps=4) => {
+    ctx.strokeStyle='rgba(30,45,71,.8)'; ctx.lineWidth=.8;
+    for (let i=0; i<=steps; i++) {
+      const y = pad.top + (ph/steps)*i;
+      ctx.beginPath(); ctx.moveTo(pad.left,y); ctx.lineTo(W-pad.right,y); ctx.stroke();
+      const val = mx - (mx-mn)/steps*i;
+      ctx.fillStyle='#4a5568'; ctx.font='9px JetBrains Mono'; ctx.textAlign='right';
+      ctx.fillText(val >= 1000 ? `${(val/1000).toFixed(0)}K` : val.toFixed(val<10?2:0), pad.left-4, y+3);
+    }
   };
-  drawLine(data.ma20,'rgba(255,181,71,0.8)',[5,3]);
-  drawLine(data.ma5,'rgba(0,212,170,1)');
-  // Legend
-  [['rgba(0,212,170,1)','5日均量',false],['rgba(255,181,71,0.8)','20日均量',true]].forEach(([c,l,d],i)=>{
-    const lx=pad.left+i*110, ly=h-12;
-    ctx.setLineDash(d?[4,2]:[]); ctx.strokeStyle=c; ctx.lineWidth=2;
-    ctx.beginPath(); ctx.moveTo(lx,ly); ctx.lineTo(lx+20,ly); ctx.stroke();
-    ctx.setLineDash([]); ctx.fillStyle='#94a3b8'; ctx.font='10px Noto Sans TC'; ctx.textAlign='left';
-    ctx.fillText(l, lx+24, ly+3);
-  });
-  // X-axis
-  ctx.fillStyle='#4a5568'; ctx.font='9px JetBrains Mono'; ctx.textAlign='center';
-  [0,Math.floor(n/4),Math.floor(n/2),Math.floor(3*n/4),n-1].forEach(i=>{
-    if(data.dates[i]) ctx.fillText(data.dates[i].slice(5), xScale(i), h-4);
-  });
-}
 
+  const line = (vals, color, dash=[], lw=1.5) => {
+    const pts = vals.map((v,i)=>v!=null?[xS(i),v]:null).filter(Boolean);
+    if (pts.length < 2) return;
+    ctx.setLineDash(dash); ctx.strokeStyle=color; ctx.lineWidth=lw;
+    ctx.beginPath(); pts.forEach(([x,y],i)=>i===0?ctx.moveTo(x,y):ctx.lineTo(x,y));
+    ctx.stroke(); ctx.setLineDash([]);
+  };
 
-// ── 匯出 PDF / DOCX ──
-async function exportReport(type) {
-  const btnId = type === 'pdf' ? 'btnPdf' : 'btnDocx';
-  const btn = document.getElementById(btnId);
-  const hint = document.getElementById('exportHint');
-
-  const origText = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = type === 'pdf' ? '⏳ 產生 PDF...' : '⏳ 產生 Word...';
-  hint.textContent = '正在伺服器端產生文件，請稍候...';
-
-  try {
-    const payload = {
-      stocks:    allData,
-      timestamp: document.getElementById('scanTime').textContent.replace('掃描時間：',''),
-      scanned:   parseInt(document.getElementById('statScanned').textContent) || 0,
-      mode_label: modeLabels[selectedMode] || '',
-    };
-
-    const resp = await fetch(`/api/export/${type}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+  const xLabels = () => {
+    ctx.fillStyle='#4a5568'; ctx.font='9px JetBrains Mono'; ctx.textAlign='center';
+    [0,Math.floor(n/4),Math.floor(n/2),Math.floor(3*n/4),n-1].forEach(i => {
+      if (data.dates[i]) ctx.fillText(data.dates[i].slice(5), xS(i), H-4);
     });
+  };
 
-    if (!resp.ok) {
-      const err = await resp.text();
-      throw new Error(`HTTP ${resp.status}: ${err.slice(0,120)}`);
+  if (mode === 'price') {
+    // Candlestick + Bollinger + Volume
+    const cl = data.close, op = data.open, hi = data.high, lo = data.low;
+    const bb_u = data.bb_upper, bb_m = data.bb_mid, bb_l = data.bb_lower;
+
+    // Price panel (top 65%)
+    const ph2 = Math.floor(ph * 0.65);
+    const vh  = ph - ph2 - 8;  // volume panel
+    const vy  = pad.top + ph2 + 8;
+
+    const priceVals = [...cl, ...bb_u, ...bb_l].filter(v=>v!=null);
+    const pMin = Math.min(...priceVals)*0.998, pMax = Math.max(...priceVals)*1.002;
+    const pyS = v => pad.top + ph2 - ((v-pMin)/(pMax-pMin||1))*ph2;
+
+    // Grid lines
+    for (let i=0; i<=4; i++) {
+      const y = pad.top + (ph2/4)*i;
+      ctx.strokeStyle='rgba(30,45,71,.8)'; ctx.lineWidth=.8;
+      ctx.beginPath(); ctx.moveTo(pad.left,y); ctx.lineTo(W-pad.right,y); ctx.stroke();
+      const v = pMax - (pMax-pMin)/4*i;
+      ctx.fillStyle='#4a5568'; ctx.font='9px JetBrains Mono'; ctx.textAlign='right';
+      ctx.fillText(v.toFixed(1), pad.left-4, y+3);
     }
 
-    // 觸發下載
-    const blob = await resp.blob();
-    const ext  = type === 'pdf' ? 'pdf' : 'docx';
-    const now  = new Date().toISOString().slice(0,16).replace('T','_').replace(':','');
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href = url;
-    a.download = `stock_report_${now}.${ext}`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    // Bollinger fill
+    ctx.beginPath();
+    ctx.moveTo(xS(0), pyS(bb_u[0]||pMax));
+    for (let i=1;i<n;i++) if(bb_u[i]!=null) ctx.lineTo(xS(i), pyS(bb_u[i]));
+    for (let i=n-1;i>=0;i--) if(bb_l[i]!=null) ctx.lineTo(xS(i), pyS(bb_l[i]));
+    ctx.closePath();
+    ctx.fillStyle='rgba(124,58,237,.06)'; ctx.fill();
 
-    hint.textContent = `✅ ${type.toUpperCase()} 下載完成！`;
-    setTimeout(() => { hint.textContent = ''; }, 3000);
+    // BB lines
+    const bbYu = bb_u.map(v=>v!=null?pyS(v):null);
+    const bbYm = bb_m.map(v=>v!=null?pyS(v):null);
+    const bbYl = bb_l.map(v=>v!=null?pyS(v):null);
+    line(bbYu,'rgba(124,58,237,.6)',[4,3]);
+    line(bbYm,'rgba(100,116,139,.5)',[3,3]);
+    line(bbYl,'rgba(124,58,237,.6)',[4,3]);
 
-  } catch (err) {
-    hint.textContent = `❌ 匯出失敗：${err.message}`;
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = origText;
+    // MA5 price
+    const ma5pY = (data.ma5p||[]).map(v=>v!=null?pyS(v):null);
+    line(ma5pY,'rgba(0,132,255,.7)',[],1.2);
+
+    // Candlesticks
+    const barW = Math.max(1.5, pw/n - 1.5);
+    for (let i=0;i<n;i++) {
+      if (cl[i]==null) continue;
+      const bull = cl[i] >= (op[i]||cl[i]);
+      const color = bull ? '#00d98b' : '#ff4d6d';
+      const x = xS(i);
+      const yHi = pyS(hi[i]||cl[i]), yLo = pyS(lo[i]||cl[i]);
+      const yO  = pyS(op[i]||cl[i]), yCl = pyS(cl[i]);
+      ctx.strokeStyle = color; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, yHi); ctx.lineTo(x, yLo); ctx.stroke();
+      const bodyY = Math.min(yO,yCl), bodyH = Math.max(1, Math.abs(yO-yCl));
+      ctx.fillStyle = bull ? 'rgba(0,217,139,.85)' : 'rgba(255,77,109,.85)';
+      ctx.fillRect(x - barW/2, bodyY, barW, bodyH);
+    }
+
+    // Volume bars (bottom panel)
+    const volVals = (data.volume||[]).filter(v=>v!=null&&v>0);
+    const volMax  = Math.max(...volVals)*1.1||1;
+    const bw2 = Math.max(1, pw/n-1);
+    for (let i=0;i<n;i++) {
+      if (!data.volume[i]) continue;
+      const bull = cl[i] >= (op[i]||cl[i]);
+      const x  = xS(i), bh = (data.volume[i]/volMax)*vh;
+      ctx.fillStyle = bull ? 'rgba(0,217,139,.4)' : 'rgba(255,77,109,.4)';
+      ctx.fillRect(x-bw2/2, vy+vh-bh, bw2, bh);
+    }
+    // Vol MA5
+    const mv5 = (data.ma5v||[]).map(v=>v!=null ? vy+vh-(v/volMax)*vh : null);
+    line(mv5,'rgba(0,212,170,.7)',[],1);
+
+    // Legend
+    const leg = [['rgba(0,132,255,.7)','MA5'],['rgba(124,58,237,.6)','布林上/下'],['rgba(100,116,139,.5)','BB中軌']];
+    leg.forEach(([c,l],i)=>{
+      const lx=pad.left+i*80;
+      ctx.strokeStyle=c; ctx.lineWidth=1.5; ctx.setLineDash(i>0?[3,2]:[]);
+      ctx.beginPath(); ctx.moveTo(lx,H-14); ctx.lineTo(lx+16,H-14); ctx.stroke();
+      ctx.setLineDash([]); ctx.fillStyle='#64748b'; ctx.font='9px Noto Sans TC'; ctx.textAlign='left';
+      ctx.fillText(l, lx+18, H-11);
+    });
+
+  } else if (mode === 'kd') {
+    const K = data.kd_k, D = data.kd_d;
+    grid(0, 100);
+    // Reference lines 20/50/80
+    [20,50,80].forEach(y => {
+      ctx.strokeStyle=y===50?'rgba(100,116,139,.4)':'rgba(100,116,139,.25)';
+      ctx.lineWidth=.8; ctx.setLineDash(y===50?[]:[4,3]);
+      ctx.beginPath(); ctx.moveTo(pad.left, yS(y,0,100)); ctx.lineTo(W-pad.right, yS(y,0,100)); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle='#4a5568'; ctx.font='9px JetBrains Mono'; ctx.textAlign='left';
+      ctx.fillText(y, W-pad.right+3, yS(y,0,100)+3);
+    });
+    // Fill between K and D
+    ctx.beginPath();
+    K.forEach((v,i)=>{ if(v!=null) i===0?ctx.moveTo(xS(i),yS(v,0,100)):ctx.lineTo(xS(i),yS(v,0,100)); });
+    D.slice().reverse().forEach((v,i)=>{ const ri=n-1-i; if(v!=null) ctx.lineTo(xS(ri),yS(v,0,100)); });
+    ctx.closePath(); ctx.fillStyle='rgba(255,215,0,.05)'; ctx.fill();
+
+    line(K.map((v,i)=>v!=null?yS(v,0,100):null),'#ffd700',[],2);
+    line(D.map((v,i)=>v!=null?yS(v,0,100):null),'rgba(255,100,100,.8)',[3,2],1.5);
+
+    // Legend
+    [['#ffd700','K值'],['rgba(255,100,100,.9)','D值']].forEach(([c,l],i)=>{
+      const lx = pad.left + i*70;
+      ctx.strokeStyle=c; ctx.lineWidth=2; ctx.setLineDash(i===1?[3,2]:[]);
+      ctx.beginPath(); ctx.moveTo(lx,H-14); ctx.lineTo(lx+18,H-14); ctx.stroke();
+      ctx.setLineDash([]); ctx.fillStyle='#94a3b8'; ctx.font='10px Noto Sans TC'; ctx.textAlign='left';
+      ctx.fillText(l, lx+22, H-11);
+    });
+
+  } else if (mode === 'macd') {
+    const ml = data.macd, sl = data.macd_signal, hs = data.macd_hist;
+    const allV = [...(ml||[]),...(sl||[]),...(hs||[])].filter(v=>v!=null);
+    const mn = Math.min(...allV), mx = Math.max(...allV);
+    const pad2 = Math.max(Math.abs(mn),Math.abs(mx))*0.1;
+    const vMin = mn-pad2, vMax = mx+pad2;
+    grid(vMin, vMax);
+
+    // Zero line
+    const zy = yS(0, vMin, vMax);
+    ctx.strokeStyle='rgba(100,116,139,.5)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(pad.left,zy); ctx.lineTo(W-pad.right,zy); ctx.stroke();
+
+    // Histogram bars
+    const bw = Math.max(1, pw/n-1);
+    for (let i=0;i<n;i++) {
+      if (hs[i]==null) continue;
+      const x = xS(i), y0 = zy, yh = yS(hs[i],vMin,vMax);
+      ctx.fillStyle = hs[i] > 0 ? 'rgba(0,217,139,.55)' : 'rgba(255,77,109,.55)';
+      ctx.fillRect(x-bw/2, Math.min(y0,yh), bw, Math.abs(y0-yh)||1);
+    }
+    line(ml.map((v,i)=>v!=null?yS(v,vMin,vMax):null),'#0084ff',[],2);
+    line(sl.map((v,i)=>v!=null?yS(v,vMin,vMax):null),'#ff8c00',[3,2],1.5);
+
+    [['#0084ff','MACD'],['#ff8c00','Signal']].forEach(([c,l],i)=>{
+      const lx=pad.left+i*90;
+      ctx.strokeStyle=c; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(lx,H-14); ctx.lineTo(lx+18,H-14); ctx.stroke();
+      ctx.fillStyle='#94a3b8'; ctx.font='10px Noto Sans TC'; ctx.textAlign='left';
+      ctx.fillText(l, lx+22, H-11);
+    });
+
+  } else if (mode === 'bb') {
+    const cl = data.close, bu = data.bb_upper, bm = data.bb_mid, bl = data.bb_lower;
+    const allV = [...cl,...bu,...bl].filter(v=>v!=null);
+    const mn = Math.min(...allV)*0.997, mx = Math.max(...allV)*1.003;
+    grid(mn, mx);
+
+    // BB fill
+    ctx.beginPath();
+    bu.forEach((v,i)=>{ if(v!=null) i===0?ctx.moveTo(xS(i),yS(v,mn,mx)):ctx.lineTo(xS(i),yS(v,mn,mx)); });
+    bl.slice().reverse().forEach((v,i)=>{ const ri=n-1-i; if(v!=null) ctx.lineTo(xS(ri),yS(v,mn,mx)); });
+    ctx.closePath(); ctx.fillStyle='rgba(124,58,237,.08)'; ctx.fill();
+
+    line(bu.map((v,i)=>v!=null?yS(v,mn,mx):null),'rgba(124,58,237,.8)',[4,3],1.5);
+    line(bm.map((v,i)=>v!=null?yS(v,mn,mx):null),'rgba(100,116,139,.6)',[3,3]);
+    line(bl.map((v,i)=>v!=null?yS(v,mn,mx):null),'rgba(124,58,237,.8)',[4,3],1.5);
+    line(cl.map((v,i)=>v!=null?yS(v,mn,mx):null),'#00d4aa',[],2);
+
+    [['#00d4aa','收盤價'],['rgba(124,58,237,.9)','上/下軌'],['rgba(100,116,139,.8)','中軌(MA20)']].forEach(([c,l],i)=>{
+      const lx=pad.left+i*100;
+      ctx.strokeStyle=c; ctx.lineWidth=i>0?1.5:2; ctx.setLineDash(i>0?[4,3]:[]);
+      ctx.beginPath(); ctx.moveTo(lx,H-14); ctx.lineTo(lx+18,H-14); ctx.stroke();
+      ctx.setLineDash([]); ctx.fillStyle='#94a3b8'; ctx.font='10px Noto Sans TC'; ctx.textAlign='left';
+      ctx.fillText(l, lx+22, H-11);
+    });
   }
+
+  xLabels();
 }
 
 function closeModal() { document.getElementById('modal').classList.remove('open'); }
 document.getElementById('modal').addEventListener('click', e => {
-  if (e.target===document.getElementById('modal')) closeModal();
+  if (e.target === document.getElementById('modal')) closeModal();
 });
+
+// ── Export ──
+async function exportReport(type) {
+  const btn = document.getElementById(type==='pdf'?'btnPdf':'btnDocx');
+  const hint = document.getElementById('exportHint');
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '⏳ 產生中...';
+  hint.textContent = '正在伺服器端產生文件...';
+
+  try {
+    const payload = {
+      stocks:     allData,
+      timestamp:  document.getElementById('scanTime').textContent.replace('掃描時間：',''),
+      scanned:    parseInt(document.getElementById('statMatched').textContent)||0,
+      mode_label: modeLabels[selectedMode]||'',
+    };
+    const resp = await fetch(`/api/export/${type}`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const blob = await resp.blob();
+    const ext  = type==='pdf'?'pdf':'docx';
+    const now  = new Date().toISOString().slice(0,16).replace('T','_').replace(':','');
+    const a    = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `stock_report_${now}.${ext}`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+    hint.textContent = `✅ ${type.toUpperCase()} 下載完成！`;
+    setTimeout(()=>hint.textContent='', 3000);
+  } catch(err) {
+    hint.textContent = `❌ 失敗：${err.message}`;
+  } finally {
+    btn.disabled = false; btn.innerHTML = orig;
+  }
+}
 </script>
 </body>
 </html>
