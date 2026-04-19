@@ -1,47 +1,31 @@
-# 台股均量追蹤系統
+# 台股均量追蹤系統 v4
 
-自動掃描 Yahoo 台股漲幅排行榜，篩選出 **5日均量 > 20日均量** 且連續 **3～5 個交易日**持續此狀態的個股。
-
----
-
-## 安裝與啟動
-
-### 1. 安裝相依套件
+## 本機啟動
 
 ```bash
 pip install -r requirements.txt
+python app.py
+# → http://localhost:5001
 ```
 
-### 2. 啟動伺服器
+## 部署到 Railway
 
 ```bash
-python app.py
+git init && git add . && git commit -m "init"
+git remote add origin https://github.com/你的帳號/tw-stock.git
+git push -u origin main
+# → railway.app 連接 repo，自動部署
 ```
 
-### 3. 開啟瀏覽器
+## 功能
 
-前往 http://localhost:5001
+- TWSE 上市 + TPEX 上櫃漲幅排行
+- 5日均量 > 20日均量，連續 2～5 日篩選
+- KD / MACD / 布林通道技術指標
+- 四種掃描範圍選擇
+- 匯出 PDF / Word 報告
 
----
+## TWSE 備援說明
 
-## 使用說明
-
-1. 點擊「開始掃描」按鈕
-2. 系統自動抓取 Yahoo 台股漲幅排行榜個股
-3. 對每支個股計算近期 5 日均量與 20 日均量
-4. 篩選出最近連續 3～5 個交易日都維持「5日均量 > 20日均量」的個股
-5. 點擊個股行可查看均量走勢圖表
-
----
-
-## 篩選邏輯
-
-```
-MA5(Volume) > MA20(Volume)  →  成立
-連續天數 ∈ [3, 5]           →  顯示
-```
-
-- **MA5**：最近 5 個交易日的平均成交量
-- **MA20**：最近 20 個交易日的平均成交量
-- **連續天數**：從今日往回計算，連續符合條件的天數
-- **均量比率**：MA5 / MA20，數值越高代表短線量能越強
+若 TWSE 直連 403（雲端部署常見），自動切換 yfinance 批次下載備援。
+TPEX 使用 OpenAPI，無此問題。
