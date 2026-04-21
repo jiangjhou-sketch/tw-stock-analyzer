@@ -520,6 +520,107 @@ def _parse_twse_openapi_item(item):
         return None
 
 
+
+def _get_yf_crumb():
+    """取得 Yahoo Finance crumb，增加 API 成功率"""
+    try:
+        sess = requests.Session()
+        sess.get('https://tw.stock.yahoo.com/', timeout=8, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124',
+        })
+        r = sess.get('https://query1.finance.yahoo.com/v1/test/getcrumb',
+                     timeout=8, headers={
+                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124',
+                         'Referer': 'https://tw.stock.yahoo.com/',
+                     })
+        if r.status_code == 200 and len(r.text) < 50:
+            return sess, r.text.strip()
+    except Exception:
+        pass
+    return requests.Session(), None
+
+
+def _yahoo_tw_gainers(market='twse', top_n=100):
+    """
+    Yahoo Finance 台股漲幅排行（主要來源）
+    market='twse' → 上市（.TW），market='tpex' → 上櫃（.TWO）
+    """
+    market_tag  = '.TW' if market == 'twse' else '.TWO'
+    market_name = '上市' if market == 'twse' else '上櫃'
+
+    BASE_H = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+        'Accept-Language': 'zh-TW,zh;q=0.9',
+        'Referer': 'https://tw.stock.yahoo.com/',
+        'Origin': 'https://tw.stock.yahoo.com',
+    }
+
+    def _parse_quotes(quotes):
+        result = []
+        for q in quotes:
+            sym = str(q.get('symbol', ''))
+            if not sym.endswith(market_tag):
+                continue
+            code = sym.replace(market_tag, '')
+            if not re.match(r'^\d{4,5}$', code):
+                continue
+            chg = round(float(q.get('regularMarketChangePercent', 0) or 0), 2)
+            if chg <= 0:
+                continue
+            result.append({
+                'code': code, 'symbol': sym,
+                'name': (q.get('longName') or q.get('shortName') or
+                         _TW_NAMES.get(code, code)),
+                'change_pct': chg,
+                'price':  float(q.get('regularMarketPrice', 0) or 0),
+                'volume': int(q.get('regularMarketVolume', 0) or 0),
+                'market': market_name,
+            })
+        return result
+
+    sess, crumb = _get_yf_crumb()
+
+    # 方案1 + 方案2：Screener GET/POST，試 query1 和 query2
+    for host in ['query1', 'query2']:
+        for method in ['GET', 'POST']:
+            try:
+                url = f'https://{host}.finance.yahoo.com/v1/finance/screener/predefined/saved'
+                params = {'scrIds': 'day_gainers', 'count': top_n * 2,
+                          'region': 'TW', 'lang': 'zh-TW'}
+                if crumb:
+                    params['crumb'] = crumb
+                if method == 'GET':
+                    resp = sess.get(url, headers=BASE_H, params=params, timeout=15)
+                else:
+                    url2 = f'https://{host}.finance.yahoo.com/v1/finance/screener'
+                    payload = {
+                        'size': top_n * 2, 'offset': 0,
+                        'sortField': 'percentchange', 'sortType': 'DESC',
+                        'quoteType': 'EQUITY',
+                        'query': {'operator': 'AND', 'operands': [
+                            {'operator': 'EQ', 'operands': ['region', 'tw']},
+                            {'operator': 'GT', 'operands': ['percentchange', 0]},
+                        ]},
+                        'userId': '', 'userIdType': 'guid',
+                    }
+                    resp = sess.post(url2, json=payload,
+                                     headers={**BASE_H, 'Content-Type': 'application/json'},
+                                     timeout=15)
+                if resp.status_code != 200:
+                    continue
+                quotes = resp.json().get('finance',{}).get('result',[{}])[0].get('quotes',[])
+                stocks = _parse_quotes(quotes)
+                if stocks:
+                    print(f'[Yahoo {host} {method}] {market_name} {len(stocks)} 支')
+                    return stocks
+            except Exception as e:
+                print(f'[Yahoo {host} {method}] 失敗: {e}')
+                continue
+
+    print(f'[Yahoo] {market_name} 全部方案失敗，改用備援')
+    return []
+
 def _twse_direct_api():
     """嘗試直連 TWSE API（多端點 × 多 header 組合）"""
     endpoints = [
@@ -559,287 +660,105 @@ def _twse_direct_api():
     return []
 
 
-def _twse_yfinance_fallback():
+def _yf_batch_gainers(codes, market_tag, market_name, min_chg=1.0):
     """
-    TWSE API 失敗時：用 yfinance 批次取已知上市股，
-    以「今日收盤 vs 前日收盤」計算正確漲幅（非 close vs open）。
+    yfinance 批次下載後計算漲幅（yfinance 1.x 正確 API）。
+    yfinance >= 0.2.38 預設 multi_level_index=True：
+      columns = (Price, Ticker)，正確取法：df['Close']['SYM']
     """
-    print('[TWSE fallback] 改用 yfinance 批次下載（正確漲幅算法）...')
-    codes   = list(dict.fromkeys(c for c in _FALLBACK_TWSE if re.match(r'^\d{4}$', c)))
-    symbols = [f'{c}.TW' for c in codes]
+    symbols = [f'{c}{market_tag}' for c in codes
+               if re.match(r'^\d{4,5}$', c)]
     result  = {}
+    BATCH   = 25   # 每批數量（太大容易逾時）
 
-    for i in range(0, len(symbols), 30):
-        batch = symbols[i:i+30]
+    for i in range(0, len(symbols), BATCH):
+        batch = symbols[i : i + BATCH]
         try:
-            # period='5d' 確保有前一交易日資料
-            df = yf.download(batch, period='5d', auto_adjust=True,
-                             progress=False, timeout=30, group_by='ticker')
-            if df.empty:
+            # 不加 group_by，讓 yfinance 用新版預設結構
+            df = yf.download(
+                batch,
+                period='5d',
+                auto_adjust=True,
+                progress=False,
+                timeout=30,
+            )
+            if df is None or df.empty:
                 continue
+
+            # 判斷欄位結構
+            lvl0 = list(df.columns.get_level_values(0).unique())
+            # 新版：lvl0 = ['Close','Open','Volume',...]
+            # 舊版：lvl0 = ['2330.TW','2317.TW',...]
+            new_api = 'Close' in lvl0
 
             for sym in batch:
                 try:
-                    # 取出該股的 Close / Volume
-                    if len(batch) == 1:
-                        cl = df['Close'].dropna()
-                        vo = df['Volume'].dropna()
+                    if new_api:
+                        # yfinance 1.x：df['Close']['SYM']
+                        if sym not in df['Close'].columns:
+                            continue
+                        cl = df['Close'][sym].dropna()
+                        vo = df['Volume'][sym].dropna() if 'Volume' in lvl0 else pd.Series(dtype=float)
                     else:
-                        if sym not in df.columns.get_level_values(0):
+                        # 舊版 group_by='ticker'：df['SYM']['Close']
+                        if sym not in lvl0:
                             continue
                         cl = df[sym]['Close'].dropna()
                         vo = df[sym]['Volume'].dropna()
 
-                    # 至少要有「今日 + 昨日」兩個收盤價
                     if len(cl) < 2:
                         continue
 
                     close_today = float(cl.iloc[-1])
-                    close_prev  = float(cl.iloc[-2])   # ← 前一交易日收盤（正確基準）
-                    v_val       = int(vo.iloc[-1]) if not vo.empty else 0
+                    close_prev  = float(cl.iloc[-2])   # 前一交易日收盤（正確基準）
+                    v_val       = int(vo.iloc[-1]) if len(vo) > 0 else 0
 
                     if close_prev <= 0:
                         continue
 
                     # 正確漲幅：(今收 - 前收) / 前收 × 100
                     chg = round((close_today - close_prev) / close_prev * 100, 2)
-                    # 最低門檻 1%，排除雜訊（避免市場偏弱時納入微漲個股）
-                    if chg < 1.0:
+                    if chg < min_chg:   # 低於最低門檻直接排除
                         continue
 
-                    code = sym.replace('.TW', '')
+                    code = sym.replace(market_tag, '')
                     result[sym] = {
-                        'code': code, 'symbol': sym,
-                        'name': _TW_NAMES.get(code, code),
+                        'code':       code,
+                        'symbol':     sym,
+                        'name':       _TW_NAMES.get(code, code),
                         'change_pct': chg,
-                        'price': close_today,
-                        'volume': v_val,
-                        'market': '上市',
+                        'price':      close_today,
+                        'volume':     v_val,
+                        'market':     market_name,
                     }
                 except Exception:
                     continue
 
         except Exception as e:
-            print(f'  [yf batch {i//30+1}] 失敗: {e}')
-        time.sleep(0.3)
+            print(f'  [yf batch {i//BATCH+1}] 失敗: {e}')
+        time.sleep(0.2)
 
     stocks = list(result.values())
-    print(f'[TWSE fallback] 取得 {len(stocks)} 支上漲個股')
+    stocks.sort(key=lambda x: -x['change_pct'])
+    print(f'[yf fallback {market_name}] 取得 {len(stocks)} 支 (≥{min_chg}%)')
     return stocks
+
+
+def _twse_yfinance_fallback():
+    """TWSE API 全部失敗時的最後備援"""
+    codes = list(dict.fromkeys(
+        c for c in _FALLBACK_TWSE if re.match(r'^\d{4}$', c)
+    ))
+    return _yf_batch_gainers(codes, '.TW', '上市')
 
 
 def _tpex_yfinance_fallback():
-    """TPEX OpenAPI 失敗時：用 yfinance 批次掃上櫃股"""
-    print('[TPEX fallback] 改用 yfinance 批次下載...')
-    codes   = list(dict.fromkeys(c for c in _FALLBACK_TPEX if re.match(r'^\d{4,5}$', c)))
-    symbols = [f'{c}.TWO' for c in codes]
-    result  = {}
+    """TPEX API 失敗時的備援"""
+    codes = list(dict.fromkeys(
+        c for c in _FALLBACK_TPEX if re.match(r'^\d{4,5}$', c)
+    ))
+    return _yf_batch_gainers(codes, '.TWO', '上櫃')
 
-    for i in range(0, len(symbols), 30):
-        batch = symbols[i:i+30]
-        try:
-            df = yf.download(batch, period='5d', auto_adjust=True,
-                             progress=False, timeout=30, group_by='ticker')
-            if df.empty:
-                continue
-            for sym in batch:
-                try:
-                    cl = (df['Close'].dropna() if len(batch) == 1
-                          else df[sym]['Close'].dropna() if sym in df.columns.get_level_values(0)
-                          else pd.Series(dtype=float))
-                    vo = (df['Volume'].dropna() if len(batch) == 1
-                          else df[sym]['Volume'].dropna() if sym in df.columns.get_level_values(0)
-                          else pd.Series(dtype=float))
-                    if len(cl) < 2:
-                        continue
-                    close_today = float(cl.iloc[-1])
-                    close_prev  = float(cl.iloc[-2])
-                    if close_prev <= 0:
-                        continue
-                    chg = round((close_today - close_prev) / close_prev * 100, 2)
-                    if chg < 1.0:   # 最低 1% 門檻
-                        continue
-                    code = sym.replace('.TWO', '')
-                    result[sym] = {
-                        'code': code, 'symbol': sym,
-                        'name': _TW_NAMES.get(code, code),
-                        'change_pct': chg, 'price': close_today,
-                        'volume': int(vo.iloc[-1]) if not vo.empty else 0,
-                        'market': '上櫃',
-                    }
-                except Exception:
-                    continue
-        except Exception as e:
-            print(f'  [tpex yf batch] 失敗: {e}')
-        time.sleep(0.3)
-
-    stocks = list(result.values())
-    print(f'[TPEX fallback] 取得 {len(stocks)} 支上漲個股')
-    return stocks
-
-
-
-def _get_yf_crumb():
-    """嘗試取得 Yahoo Finance crumb（讓 API 不被 403）"""
-    try:
-        sess = requests.Session()
-        # 先造訪 Yahoo TW 首頁取 cookie
-        sess.get('https://tw.stock.yahoo.com/', timeout=8, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124',
-        })
-        # 取 crumb
-        r = sess.get('https://query1.finance.yahoo.com/v1/test/getcrumb',
-                     timeout=8, headers={
-                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124',
-                         'Referer': 'https://tw.stock.yahoo.com/',
-                     })
-        if r.status_code == 200 and len(r.text) < 50:
-            return sess, r.text.strip()
-    except Exception:
-        pass
-    return requests.Session(), None
-
-
-def _yahoo_tw_gainers(market='twse', top_n=100):
-    """
-    從 Yahoo Finance 台股漲幅排行取資料（多端點 + crumb 策略）
-    market='twse' → 上市, market='tpex' → 上櫃
-    """
-    market_tag  = '.TW' if market == 'twse' else '.TWO'
-    market_name = '上市' if market == 'twse' else '上櫃'
-
-    BASE_H = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/javascript, */*; q=0.01',
-        'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8',
-        'Referer': 'https://tw.stock.yahoo.com/',
-        'Origin': 'https://tw.stock.yahoo.com',
-    }
-
-    stocks = []
-
-    # ── 先取 crumb（增加成功率）──
-    sess, crumb = _get_yf_crumb()
-
-    def _parse_quotes(quotes):
-        result = []
-        for q in quotes:
-            sym = str(q.get('symbol', ''))
-            if not sym.endswith(market_tag):
-                continue
-            code = sym.replace(market_tag, '')
-            if not re.match(r'^\d{4,5}$', code):
-                continue
-            chg = round(float(q.get('regularMarketChangePercent', 0) or 0), 2)
-            if chg <= 0:
-                continue
-            result.append({
-                'code': code, 'symbol': sym,
-                'name': (q.get('longName') or q.get('shortName') or
-                         _TW_NAMES.get(code, code)),
-                'change_pct': chg,
-                'price':  float(q.get('regularMarketPrice', 0) or 0),
-                'volume': int(q.get('regularMarketVolume', 0) or 0),
-                'market': market_name,
-            })
-        return result
-
-    # ── 方案1: Screener predefined (query1) ──
-    for host in ['query1', 'query2']:
-        try:
-            params = {'scrIds': 'day_gainers', 'count': top_n * 2,
-                      'region': 'TW', 'lang': 'zh-TW'}
-            if crumb:
-                params['crumb'] = crumb
-            url = f'https://{host}.finance.yahoo.com/v1/finance/screener/predefined/saved'
-            resp = sess.get(url, headers=BASE_H, params=params, timeout=15)
-            if resp.status_code == 200:
-                quotes = resp.json().get('finance',{}).get('result',[{}])[0].get('quotes',[])
-                stocks = _parse_quotes(quotes)
-                if stocks:
-                    print(f'[Yahoo {host} Screener] {market_name} {len(stocks)} 支')
-                    return stocks
-        except Exception as e:
-            print(f'[Yahoo {host} Screener] 失敗: {e}')
-
-    # ── 方案2: Screener POST ──
-    try:
-        payload = {
-            'size': top_n * 2, 'offset': 0,
-            'sortField': 'percentchange', 'sortType': 'DESC',
-            'quoteType': 'EQUITY',
-            'query': {
-                'operator': 'AND',
-                'operands': [
-                    {'operator': 'EQ', 'operands': ['region', 'tw']},
-                    {'operator': 'GT', 'operands': ['percentchange', 0]},
-                ]
-            },
-            'userId': '', 'userIdType': 'guid',
-        }
-        if crumb:
-            payload['crumb'] = crumb
-        r2 = sess.post(
-            'https://query1.finance.yahoo.com/v1/finance/screener',
-            json=payload,
-            headers={**BASE_H, 'Content-Type': 'application/json'},
-            timeout=15,
-        )
-        if r2.status_code == 200:
-            quotes2 = r2.json().get('finance',{}).get('result',[{}])[0].get('quotes',[])
-            stocks = _parse_quotes(quotes2)
-            if stocks:
-                print(f'[Yahoo Screener POST] {market_name} {len(stocks)} 支')
-                return stocks
-    except Exception as e:
-        print(f'[Yahoo Screener POST] 失敗: {e}')
-
-    # ── 方案3: v8 chart（個股逐一查，速度慢但準確）──
-    # 只在掃描少量時用，避免太慢
-    try:
-        all_codes = list(_TW_NAMES.keys()) if market == 'twse' else []
-        if all_codes:
-            sample_codes = all_codes[:60]   # 先試前60支
-            for code in sample_codes:
-                try:
-                    sym = f'{code}{market_tag}'
-                    params3 = {'range': '2d', 'interval': '1d'}
-                    if crumb:
-                        params3['crumb'] = crumb
-                    r3 = sess.get(
-                        f'https://query1.finance.yahoo.com/v8/finance/chart/{sym}',
-                        headers=BASE_H, params=params3, timeout=8,
-                    )
-                    if r3.status_code != 200:
-                        continue
-                    meta = r3.json()['chart']['result'][0]['meta']
-                    price = float(meta.get('regularMarketPrice', 0) or 0)
-                    prev  = float(meta.get('chartPreviousClose') or
-                                  meta.get('previousClose', 0) or 0)
-                    if prev <= 0 or price <= 0:
-                        continue
-                    chg = round((price - prev) / prev * 100, 2)
-                    if chg <= 0:
-                        continue
-                    vol = int(meta.get('regularMarketVolume', 0) or 0)
-                    stocks.append({
-                        'code': code, 'symbol': sym,
-                        'name': _TW_NAMES.get(code, code),
-                        'change_pct': chg, 'price': price,
-                        'volume': vol, 'market': market_name,
-                    })
-                    time.sleep(0.05)
-                except Exception:
-                    continue
-            if stocks:
-                stocks.sort(key=lambda x: -x['change_pct'])
-                print(f'[Yahoo v8 chart] {market_name} {len(stocks)} 支')
-                return stocks[:top_n]
-    except Exception as e:
-        print(f'[Yahoo v8 chart] 失敗: {e}')
-
-    print(f'[Yahoo] {market_name} 全部方案失敗')
-    return []
 
 def get_twse_stocks():
     # 優先用 Yahoo Finance（最準確，包含即時漲幅）
